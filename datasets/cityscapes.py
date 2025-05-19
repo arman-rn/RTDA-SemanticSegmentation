@@ -1,10 +1,9 @@
-import os
+from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
 import torch
 from albumentations import Compose
-from albumentations.pytorch import ToTensorV2
 from PIL import Image
 from torch.utils.data import Dataset
 
@@ -17,7 +16,7 @@ class CityScapes(Dataset):
     """
 
     def __init__(
-        self, cityscapes_path: str, train_val: str, transforms: Optional[Compose] = None
+        self, cityscapes_path: str, split: str, transforms: Optional[Compose] = None
     ):
         """
         Initializes the CityScapes dataset class.
@@ -26,40 +25,36 @@ class CityScapes(Dataset):
 
         Args:
             cityscapes_path (str): The root directory path where the CityScapes dataset is stored.
-            train_val (str): A string that specifies whether to load the 'train' or 'val' subset of the dataset.
+            split (str): A string that specifies whether to load the 'train' or 'val' subset of the dataset.
             transforms (Optional[Compose], optional): A function/transform that takes in an image and label and returns a transformed version. Defaults to None.
 
         Raises:
-            ValueError: If train_val is not 'train' or 'val'.
+            ValueError: If split is not 'train' or 'val'.
         """
 
-        if train_val not in ["train", "val"]:
-            raise ValueError("train_val must be 'train' or 'val'")
+        if split not in ["train", "val"]:
+            raise ValueError("split must be 'train' or 'val'")
 
-        self.cityscapes_path = cityscapes_path
+        self.cityscapes_path = Path(cityscapes_path)
         self.transforms = transforms
-        self.image_label_pairs = self._get_image_label_pairs(train_val)
+        self.image_label_pairs = self._get_image_label_pairs(split)
 
-    def _get_image_label_pairs(self, train_val: str) -> list[Tuple[str, str]]:
+    def _get_image_label_pairs(self, split: str) -> list[Tuple[str, str]]:
         image_label_pairs = []
-        path = os.path.join(self.cityscapes_path, "Cityscapes", "gtFine", train_val)
 
-        # Iterate through the directory and get all the image paths
-        for root, _, files in os.walk(path):
-            for file in files:
-                if file.endswith(".png"):
-                    if "_gtFine_labelTrainIds" not in file:
-                        continue
-                    # Get the full path to the image
-                    label_path = os.path.join(root, file)
-                    # Get the corresponding label path
-                    img_path = label_path.replace(
-                        "_gtFine_labelTrainIds", "_leftImg8bit"
-                    ).replace("gtFine", "images")
-                    # Append the paths to the image_label_pairs list
-                    image_label_pairs.append((img_path, label_path))
-                else:
-                    print(f"File {file} is not a .png file. Skipping.")
+        # rglob & sort for deterministic order
+        image_root = self.cityscapes_path / "images" / split
+        image_paths = sorted(image_root.rglob("*.png"))
+
+        for image_path in image_paths:
+            # Get the corresponding label path
+            label_path = Path(
+                str(image_path)
+                .replace("images", "gtFine")
+                .replace("_leftImg8bit", "_gtFine_labelTrainIds")
+            )
+            image_label_pairs.append((image_path, label_path))
+
         return image_label_pairs
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -81,7 +76,7 @@ class CityScapes(Dataset):
 
         if self.transforms:
             transformed = self.transforms(image=img, mask=label)
-            img, label = (
+            image_tensor, label_tensor = (
                 transformed["image"],
                 transformed["mask"],
             )
@@ -96,27 +91,22 @@ class CityScapes(Dataset):
             # The output tensors are:
             # image: torch.FloatTensor (C, H, W)
             # label: torch.LongTensor (H, W)
-
-            if not any(isinstance(t, ToTensorV2) for t in self.transforms.transforms):
-                # If ToTensorV2() is not in the transform, we need to convert the image and label to tensors manually.
-                img = torch.from_numpy(img).permute(2, 0, 1).float() / 255
-                label = torch.from_numpy(label).long()
         else:
             # If no transform is provided, we need to convert the image and label to tensors manually.
 
-            img = torch.from_numpy(img).permute(2, 0, 1).float() / 255
+            image_tensor = torch.from_numpy(img).permute(2, 0, 1).float() / 255
             # torch.from_numpy(img): Converts the NumPy array (shape (H, W, C), dtype uint8, values 0–255) into a PyTorch tensor (still (H, W, C), still uint8).
             # permute(2, 0, 1): Reorders the dimensions from (H, W, C) → (C, H, W). This is the format expected by PyTorch models (channel-first).
             # float(): Converts from uint8 (0–255) to float32.
             # / 255: Normalizes pixel values from [0, 255] to [0.0, 1.0].
 
-            label = torch.from_numpy(label).long()
+            label_tensor = torch.from_numpy(label).long()
             # torch.from_numpy(label): Converts the label mask from a NumPy array (shape (H, W), dtype usually uint8 or int32) to a PyTorch tensor.
 
             # .long(): Converts the tensor to int64 (PyTorch's default long integer type).
             # This is important because: PyTorch loss functions like nn.CrossEntropyLoss require target tensors to be of type torch.LongTensor.
 
-        return img, label
+        return image_tensor, label_tensor
 
     def __len__(self) -> int:
         """
@@ -134,26 +124,3 @@ class CityScapes(Dataset):
 # gtFine is the folder with the labels ("gtFine_labelTrainIds" files are the ones with labels for each pixel and the "gtFine_color" files are the ones with colors for each label for visualization),
 # the images with "gtFine_labelTrainIds" name are used for training because they are the ones with the labels (each pixel has a label),
 # we need to get the corresponding image for each label, which is in the "/images" folder with the same name but "leftImg8bit" instead of "gtFine_labelTrainIds".
-
-if __name__ == "__main__":
-    import random
-
-    import matplotlib.pyplot as plt
-
-    dataset = CityScapes("./data", train_val="train")
-
-    idx = random.randint(0, len(dataset) - 1)
-    image, label = dataset[idx]
-
-    # Plot the image and label
-    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-    axes[0].imshow(image.permute(1, 2, 0))  # Convert from [C, H, W] to [H, W, C]
-    axes[0].set_title("Image")
-    axes[0].axis("off")
-
-    axes[1].imshow(label, cmap="gray", vmin=0, vmax=20)
-    axes[1].set_title("Segmentation Mask")
-    axes[1].axis("off")
-
-    plt.show()
-    plt.show()
