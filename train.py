@@ -2,10 +2,10 @@
 # It handles the forward pass, loss calculation, backward pass (gradient computation), and optimizer step (weight updates).
 
 import torch
-import wandb
 from tqdm import tqdm
 
 import config as cfg
+import wandb
 from utils import poly_lr_scheduler
 
 
@@ -18,6 +18,7 @@ def train_one_epoch(
     epoch,
     global_step_offset,
     max_iter,
+    initial_base_lr,
     scaler=None,
 ):
     # """
@@ -53,9 +54,9 @@ def train_one_epoch(
         labels = labels.to(device).long()  # Moves data to the target device.
 
         # Update LR using poly scheduler based on current_global_step
-        poly_lr_scheduler(
+        current_lr = poly_lr_scheduler(
             optimizer,
-            # cfg.LEARNING_RATE,
+            initial_base_lr,
             current_global_step,
             max_iter,
             cfg.LR_SCHEDULER_POWER,
@@ -100,8 +101,6 @@ def train_one_epoch(
 
         # Accumulate the batch loss.
         running_loss += loss.item()
-        # Get the current learning rate for display.
-        current_lr = optimizer.param_groups[0]["lr"]
         # Update the tqdm progress bar with current loss and LR.
         progress_bar.set_postfix(loss=f"{loss.item():.4f}", lr=f"{current_lr:.2e}")
 

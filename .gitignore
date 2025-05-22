@@ -51,3 +51,7 @@ env/
 dist/
 build/
 pip-wheel-metadata/
+
+wandb/
+
+trained_models/

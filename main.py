@@ -6,9 +6,9 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import wandb
 
 import config as cfg
+import wandb
 from data_loader import get_loaders
 from model_loader import get_model
 from train import train_one_epoch
@@ -130,25 +130,17 @@ def main():
     if wandb.run:
         wandb.watch(model, log="all", log_freq=cfg.PRINT_FREQ_BATCH * 5, log_graph=True)
 
-    # --- Optimizer, Loss, Scaler ---
-
-    # Create the SGD optimizer.
-    # `model.optim_parameters()` provides the parameter groups for differential learning rates (backbone vs. head).
-
     # --- Optimizer Initialization ---
-    # model.optim_parameters() will use current_base_lr to set different LRs for head/backbone
-    param_groups = model.optim_parameters(current_base_lr)
-
     if effective_optimizer_type.lower() == "sgd":
         optimizer = optim.SGD(
-            param_groups,  # This contains params and their specific initial LRs
+            model.parameters(),  # This contains params and their specific initial LRs
             # lr=current_base_lr, # Not needed here, already set in param_groups
             momentum=cfg.SGD_MOMENTUM,
             weight_decay=current_weight_decay,
         )
     elif effective_optimizer_type.lower() == "adam":
         optimizer = optim.Adam(
-            param_groups,  # This contains params and their specific initial LRs
+            model.parameters(),  # This contains params and their specific initial LRs
             # lr=current_base_lr, # Not needed here, already set in param_groups
             betas=(cfg.ADAM_BETA1, cfg.ADAM_BETA2),
             weight_decay=current_weight_decay,
@@ -175,10 +167,10 @@ def main():
     # Initialize tracking variables
     best_miou = 0.0
     global_step = 0
-    max_iter = cfg.TRAIN_EPOCHS * len(train_loader)
+    max_iter = effective_epochs * len(train_loader)
 
-    for epoch in range(cfg.TRAIN_EPOCHS):  # epoch is 0-indexed
-        print(f"\n--- Epoch {epoch + 1}/{cfg.TRAIN_EPOCHS} ---")
+    for epoch in range(effective_epochs):  # epoch is 0-indexed
+        print(f"\n--- Epoch {epoch + 1}/{effective_epochs} ---")
 
         avg_train_loss, global_step = train_one_epoch(
             model,
@@ -189,6 +181,7 @@ def main():
             epoch,
             global_step,
             max_iter,
+            current_base_lr,
             scaler,
         )
         print(f"Epoch {epoch + 1} Training: Average Loss: {avg_train_loss:.4f}")
@@ -201,7 +194,7 @@ def main():
 
         if (epoch + 1) % cfg.VALIDATE_FREQ_EPOCH == 0 or (
             epoch + 1
-        ) == cfg.TRAIN_EPOCHS:
+        ) == effective_epochs:
             current_miou, avg_val_loss = validate_and_log(
                 model, val_loader, criterion, cfg.DEVICE, epoch, global_step
             )

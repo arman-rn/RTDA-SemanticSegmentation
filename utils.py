@@ -5,68 +5,39 @@ import time
 
 import numpy as np
 import torch
-import wandb
 from fvcore.nn import FlopCountAnalysis, flop_count_table
 
+import wandb
 from data_loader import (  # For W&B image logging
     CITYSCAPES_COLOR_MAP_TRAIN_IDS,
     tensor_to_rgb,
 )
 
+
 # --- Learning Rate Scheduler ---
-# The actual LR for each param group is already set in the optimizer by model.optim_parameters()
-# So, the scheduler needs to scale these existing LRs.
-# def poly_lr_scheduler(optimizer, init_lr, current_iter, max_iter=300, power=0.9):
-#     """
-#     Polynomial decay of learning rate
-
-#     Args:
-#         optimizer (_type_): _description_
-#         init_lr (_type_): initial learning rate for the backbone
-#         current_iter (_type_): current iteration
-#         max_iter (int, optional): number of maximum iterations. Defaults to 300.
-#         power (float, optional): polymomial power. Defaults to 0.9.
-
-#     Returns:
-#         _type_: _description_
-#     """
-#     # Calculate the new learning rate.
-#     lr = init_lr * (1 - current_iter / max_iter) ** power
-
-#     # Iterate through optimizer.param_groups to set the lr for each group.
-#     for param_group in optimizer.param_groups:
-#         # Check if the parameter group has a custom learning rate multiplier. It respects 'lr_mult' if defined for a parameter group (this is used by DeepLabV2's optim_parameters to give the head a 10x higher LR).
-#         if "lr_mult" in param_group:
-#             param_group["lr"] = lr * param_group["lr_mult"]
-#         else:
-#             param_group["lr"] = lr
-#     return lr
-
-
-def poly_lr_scheduler(
-    optimizer, current_iter, max_iter, power
-):  # No need for init_lr here
+def poly_lr_scheduler(optimizer, initial_learning_rate, current_iter, max_iter, power):
     """
     Polynomial decay of learning rate.
-    Scales the 'lr' within each param_group based on its 'initial_lr'.
-    'initial_lr' should be set for each group before the first call.
+    Applies decay to the provided 'initial_learning_rate' and updates
+    the single parameter group in the optimizer.
+
+    Args:
+        optimizer: The PyTorch optimizer.
+        initial_learning_rate (float): The starting learning rate from which to decay.
+        current_iter (int): Current training iteration.
+        max_iter (int): Total number of training iterations.
+        power (float): The exponent for the polynomial decay.
+    Returns:
+        float: The newly calculated (decayed) learning rate.
     """
+
     lr_scale_factor = (1 - current_iter / max_iter) ** power
-    current_main_lr = -1
+    new_lr = initial_learning_rate * lr_scale_factor
 
-    for i, param_group in enumerate(optimizer.param_groups):
-        # Store original LR on first call to scheduler for this group
-        if "initial_lr" not in param_group:
-            param_group["initial_lr"] = param_group["lr"]
+    # Update the learning rate in the optimizer's single parameter group
+    optimizer.param_groups[0]["lr"] = new_lr
 
-        param_group["lr"] = param_group["initial_lr"] * lr_scale_factor
-
-        # Assuming first group is the main one for LR logging
-        if i == 0:
-            current_main_lr = param_group["lr"]
-
-    # Return the current LR of the first group for logging
-    return current_main_lr
+    return new_lr
 
 
 # --- mIoU Calculation Helpers ---
