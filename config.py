@@ -22,9 +22,14 @@ IMG_HEIGHT = 512  # The target resolution for training and testing images (1024x
 IMG_WIDTH = 1024  # The target resolution for training and testing images (1024x512 for Cityscapes as per Step 2a)
 IGNORE_INDEX = 255  # A special label value (often 255 for Cityscapes) that the loss function should ignore. This is typically used for "void" or "unlabeled" regions in the ground truth masks.
 
+# --- DataLoader Settings ---
+# 8 if you're using A100
+DATALOADER_NUM_WORKERS = 2  # Default value, can be adjusted based on environment
+
 # --- Training Hyperparameters ---
 TRAIN_EPOCHS = 50  # The total number of times the training loop will iterate over the entire training dataset (50 epochs for Step 2a).
-BATCH_SIZE = 2  # The number of images processed in one forward/backward pass during training. Adjust based on GPU memory.
+# Try 8 if using A100
+BATCH_SIZE = 4  # The number of images processed in one forward/backward pass during training. Adjust based on GPU memory.
 # LEARNING_RATE = 2.5e-4  # The initial learning rate for the optimizer. The DeepLabV2 model uses a differential learning rate where the head might have a 10x higher LR than the backbone. This LEARNING_RATE usually refers to the backbone's LR.
 # OPTIMIZER_MOMENTUM = 0.9  # Common parameters for the SGD optimizer.
 # OPTIMIZER_WEIGHT_DECAY = 5e-4  # Common parameters for the SGD optimizer.
@@ -32,7 +37,7 @@ LR_SCHEDULER_POWER = 0.9  # Parameter for the polynomial learning rate decay sch
 
 # --- Optimizer Settings ---
 # Default optimizer type
-OPTIMIZER_TYPE = "sgd"  # Options: 'sgd', 'adam'
+OPTIMIZER_TYPE = "adam"  # Options: 'sgd', 'adam'
 
 # Common settings
 WEIGHT_DECAY = 1e-4  # A general weight decay, can be overridden per optimizer
@@ -43,10 +48,6 @@ SGD_MOMENTUM = 0.9
 
 # Adam specific parameters
 ADAM_LEARNING_RATE = 1e-4  # Typical starting LR for Adam
-ADAM_BETA1 = 0.9
-ADAM_BETA2 = 0.999
-# ADAM_WEIGHT_DECAY can be set here if different from common WEIGHT_DECAY
-# ADAM_WEIGHT_DECAY = 1e-5 # Example
 
 # --- Hardware ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

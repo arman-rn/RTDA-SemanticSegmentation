@@ -1,25 +1,44 @@
-# main script that orchestrates the entire training and validation pipeline.
-# It initializes everything, runs the training loop (calling functions from train.py and validation.py), saves the best model, and performs final metric calculations.
+"""
+Main script for orchestrating the training and validation pipeline
+for DeepLabV2 semantic segmentation.
+
+It handles:
+- Command-line argument parsing for overriding configurations.
+- Initialization of datasets, data loaders, and the model.
+- Setup of the optimizer, loss function, and mixed-precision scaler.
+- The main training loop, calling epoch-level training and validation functions.
+- Saving the best performing model based on validation mIoU.
+- Final calculation and reporting of performance metrics (FLOPs, Latency, etc.).
+- Integration with Weights & Biases for experiment tracking.
+"""
+
 import argparse
+import importlib  # For reloading config in notebooks
 import os
+from typing import Any, Optional
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
+from torch import GradScaler, nn, optim  # For type hints
 
-import config as cfg
-import wandb
+import config as cfg  # Your project's configuration module
+import wandb  # For Weights & Biases integration
 from data_loader import get_loaders
 from model_loader import get_model
 from train import train_one_epoch
 from utils import calculate_performance_metrics, init_wandb
 from validation import validate_and_log
 
+# Type alias for the config module for clarity
+ConfigModule = Any  # Could be replaced with a Protocol if config structure is strict
+
 
 def main():
+    """
+    Main function to run the training and evaluation pipeline.
+    """
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(
-        description="DeepLabV2 Semantic Segmentation Training"
+        description="DeepLabV2 Semantic Segmentation Training Script"
     )
     parser.add_argument(
         "--optimizer",
@@ -28,7 +47,7 @@ def main():
         choices=["sgd", "adam"],
         help="Optimizer type to use (sgd or adam). Overrides config if set.",
     )
-    # Add other arguments you might want to control from CLI, e.g., learning_rate, batch_size
+
     parser.add_argument(
         "--lr", type=float, default=None, help="Override learning rate from config."
     )
@@ -42,12 +61,13 @@ def main():
     args = parser.parse_args()
 
     # --- Determine Effective Configuration ---
-    # Start with config file values, then override with CLI args if provided
+    # Reload config in case it was changed (especially useful in notebooks)
+    importlib.reload(cfg)
+
     effective_optimizer_type = args.optimizer if args.optimizer else cfg.OPTIMIZER_TYPE
 
     effective_epochs = args.epochs if args.epochs is not None else cfg.TRAIN_EPOCHS
 
-    # Determine learning rate and other optimizer params based on choice
     effective_optimizer_config = {"optimizer_type": effective_optimizer_type}
     if effective_optimizer_type.lower() == "sgd":
         current_base_lr = args.lr if args.lr is not None else cfg.SGD_LEARNING_RATE
@@ -67,18 +87,19 @@ def main():
         effective_optimizer_config.update(
             {
                 "learning_rate": current_base_lr,
-                "beta1": cfg.ADAM_BETA1,
-                "beta2": cfg.ADAM_BETA2,
                 "weight_decay": current_weight_decay,
             }
         )
     else:
         raise ValueError(f"Unsupported optimizer type: {effective_optimizer_type}")
 
-    print(f"Using Optimizer: {effective_optimizer_type.upper()}")
-    print(f"Effective Base Learning Rate: {current_base_lr}")
-    print(f"Effective Weight Decay: {current_weight_decay}")
+    print("--- Effective Configuration ---")
+    print(f"Optimizer: {effective_optimizer_type.upper()}")
+    print(f"Base Learning Rate: {current_base_lr}")
+    print(f"Weight Decay: {current_weight_decay}")
     print(f"Training for {effective_epochs} epochs.")
+    print(f"Device: {cfg.DEVICE}")
+    print("-----------------------------")
 
     # --- Initial Checks & Setup ---
     if not os.path.exists(cfg.DATASET_PATH):
@@ -109,6 +130,11 @@ def main():
             wandb.finish(exit_code=1)
         return
 
+    # --- Model ---
+    model: nn.Module = get_model(cfg.NUM_CLASSES, cfg.PRETRAINED_MODEL_PATH, cfg.DEVICE)
+    if wandb.run:
+        wandb.watch(model, log="all", log_freq=cfg.PRINT_FREQ_BATCH * 5, log_graph=True)
+
     if not train_loader or not len(train_loader.dataset):  # Check if dataset is empty
         print(
             "CRITICAL ERROR: Training dataset is empty or DataLoader failed. Check dataset path and 'datasets/cityscapes.py'."
@@ -133,16 +159,15 @@ def main():
     # --- Optimizer Initialization ---
     if effective_optimizer_type.lower() == "sgd":
         optimizer = optim.SGD(
-            model.parameters(),  # This contains params and their specific initial LRs
-            # lr=current_base_lr, # Not needed here, already set in param_groups
+            model.parameters(),
+            lr=current_base_lr,
             momentum=cfg.SGD_MOMENTUM,
             weight_decay=current_weight_decay,
         )
     elif effective_optimizer_type.lower() == "adam":
         optimizer = optim.Adam(
-            model.parameters(),  # This contains params and their specific initial LRs
-            # lr=current_base_lr, # Not needed here, already set in param_groups
-            betas=(cfg.ADAM_BETA1, cfg.ADAM_BETA2),
+            model.parameters(),
+            lr=current_base_lr,
             weight_decay=current_weight_decay,
         )
     else:  # Should have been caught earlier, but good practice
@@ -155,7 +180,7 @@ def main():
     criterion = nn.CrossEntropyLoss(ignore_index=cfg.IGNORE_INDEX)
 
     # Initializes the gradient scaler for mixed-precision training.
-    scaler = None
+    scaler: Optional[GradScaler] = None
     if cfg.DEVICE.type == "cuda":
         scaler = torch.GradScaler()
         print("Using mixed-precision training with GradScaler on CUDA device.")
@@ -181,7 +206,8 @@ def main():
             epoch,
             global_step,
             max_iter,
-            current_base_lr,
+            current_base_lr,  # Pass the initial base LR for the scheduler
+            effective_epochs,  # Pass total epochs for tqdm display
             scaler,
         )
         print(f"Epoch {epoch + 1} Training: Average Loss: {avg_train_loss:.4f}")
@@ -196,7 +222,14 @@ def main():
             epoch + 1
         ) == effective_epochs:
             current_miou, avg_val_loss = validate_and_log(
-                model, val_loader, criterion, cfg.DEVICE, epoch, global_step
+                model,
+                val_loader,
+                criterion,
+                cfg.DEVICE,
+                epoch,
+                global_step,
+                effective_epochs,  # Pass total epochs for tqdm
+                cfg,  # Pass the config module for NORM_MEAN/STD in image logging
             )
             # validate_and_log handles its own W&B logging for validation metrics
 

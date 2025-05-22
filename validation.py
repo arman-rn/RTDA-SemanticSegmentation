@@ -1,29 +1,67 @@
+"""
+Defines the model evaluation logic on the validation dataset.
+
+This module calculates metrics such as validation loss and Mean Intersection
+over Union (mIoU). It's typically called after each training epoch or periodically.
+Gradients are disabled during validation for efficiency.
+"""
+
 # This file defines the logic to evaluate the model's performance on the validation dataset.
 # It calculates metrics like validation loss and Mean Intersection over Union (mIoU).
+
+from typing import Any, Optional, Tuple
+
 import numpy as np
 import torch
-import wandb
-from tqdm import tqdm
+from torch import nn  # For type hints
+from torch.utils.data import DataLoader
+from tqdm import tqdm  # For progress bar
 
-import config as cfg
+import wandb  # For logging to Weights & Biases
 from utils import fast_hist, log_segmentation_to_wandb, per_class_iou
+
+# Type alias for the config module for clarity
+ConfigModule = Any
 
 
 @torch.no_grad()  # Disables gradient calculations for all operations within the decorated function. This is crucial for validation/inference as it reduces memory usage and speeds up computation.
 def validate_and_log(
-    model, val_loader, criterion, device, epoch, global_step
-):  # Added global_step for W&B
+    model: nn.Module,
+    val_loader: DataLoader,
+    criterion: Optional[nn.Module],  # Criterion can be None if only mIoU is needed
+    device: torch.device,
+    epoch: int,  # Current epoch number, 0-indexed
+    global_step: int,
+    effective_total_epochs: int,  # For accurate tqdm display
+    config_module_ref: ConfigModule,  # Pass the config module for NORM_MEAN/STD
+) -> Tuple[float, float]:
     """
-    Validates the model and logs metrics to W&B.
+    Evaluates the model on the validation dataset and logs metrics.
+
+    Calculates validation loss (if criterion is provided) and Mean Intersection
+    over Union (mIoU). Logs these metrics and sample segmentation masks to
+    Weights & Biases.
+
     Args:
-        model: The neural network model.
-        val_loader: DataLoader for validation data.
-        criterion: The loss function.
-        device: The device to run validation on.
-        epoch: The current epoch number (0-indexed for logging).
-        global_step: Current global training step for W&B logging.
+        model: The neural network model to be evaluated.
+        val_loader: PyTorch DataLoader for the validation dataset.
+        criterion: The loss function. Can be None if loss is not to be computed.
+        device: The PyTorch device to perform validation on.
+        epoch: The current epoch number (0-indexed from training loop,
+               displayed as 1-indexed for logging).
+        global_step: The current global training step, used for aligning
+                     W&B logs with training progress.
+        effective_total_epochs: The total number of epochs for the current training run,
+                                used for accurate tqdm progress bar display.
+        config_module_ref: A reference to the configuration module (e.g., `cfg`)
+                           to access parameters like NORM_MEAN, NORM_STD for
+                           image denormalization during W&B logging.
+
     Returns:
-        tuple: (mean_iou, average_validation_loss)
+        A tuple containing:
+        - mean_iou (float): The mean Intersection over Union over all classes.
+        - avg_val_loss (float): The average validation loss. Returns 0.0 if
+                                criterion is None.
     """
     # Set the model to evaluation mode (disables dropout, uses fixed batch norm statistics).
     model.eval()
@@ -32,14 +70,14 @@ def validate_and_log(
     total_val_loss = 0
 
     # Initialize confusion matrix for IoU calculation
-    hist = np.zeros((cfg.NUM_CLASSES, cfg.NUM_CLASSES))
+    hist = np.zeros((config_module_ref.NUM_CLASSES, config_module_ref.NUM_CLASSES))
 
     first_batch_images_logged = False  #  Flag to ensure sample images are logged only once per validation run if desired.
 
     # Wraps val_loader for a progress bar.
     progress_bar = tqdm(
         val_loader,
-        desc=f"Epoch {epoch + 1}/{cfg.TRAIN_EPOCHS} [Validation]",
+        desc=f"Epoch {epoch + 1}/{effective_total_epochs} [Validation]",  # Use effective_total_epochs
         unit="batch",
         leave=False,
     )
@@ -56,7 +94,7 @@ def validate_and_log(
             total_val_loss += loss.item()
             progress_bar.set_postfix(loss=f"{loss.item():.4f}")
 
-        # Gets the predicted class ID for each pixel by taking the argmax along the channel dimension of the output logits.
+        # Gets the predicted class ID for each pixel by taking the argmax along the channel dimension of the output logits. Get predicted class IDs (shape: B, H, W)
         preds = torch.argmax(outputs, dim=1)
 
         # Convert tensors to numpy arrays for histogram calculation
@@ -64,13 +102,13 @@ def validate_and_log(
         preds_np = preds.cpu().numpy()
 
         # Creates a mask to exclude ignored pixels from mIoU calculation.
-        valid_pixels_mask = labels_np != cfg.IGNORE_INDEX
+        valid_pixels_mask = labels_np != config_module_ref.IGNORE_INDEX
 
         # Updates the confusion matrix hist using only valid pixels.
         hist += fast_hist(
             labels_np[valid_pixels_mask].flatten(),
             preds_np[valid_pixels_mask].flatten(),
-            cfg.NUM_CLASSES,
+            config_module_ref.NUM_CLASSES,
         )
 
         # W&B Image Logging
@@ -78,12 +116,12 @@ def validate_and_log(
         if (
             not first_batch_images_logged
             and wandb.run
-            and (epoch + 1) % cfg.WANDB_LOG_IMAGES_FREQ_EPOCH == 0
+            and (epoch + 1) % config_module_ref.WANDB_LOG_IMAGES_FREQ_EPOCH == 0
             and (epoch + 1) > 0
         ):  # Ensure not epoch 0 if 0-indexed
             log_segmentation_to_wandb(
-                images, labels, preds, epoch + 1, cfg
-            )  # Pass cfg for NORM_MEAN/STD
+                images, labels, preds, epoch + 1, config_module_ref
+            )  # Pass config_module_ref for NORM_MEAN/STD
             first_batch_images_logged = True
 
     # Calculate average validation loss
@@ -92,9 +130,9 @@ def validate_and_log(
     )
 
     # Calculate Mean IoU
-    ious = per_class_iou(hist)  # This now handles nan_to_num
+    ious = per_class_iou(hist)
     # Calculate mean IoU across all classes
-    mean_iou = np.mean(ious)
+    mean_iou = float(np.mean(ious))
 
     # W&B Logging (Epoch-level Validation)
     # Logs validation loss, mIoU, and per-class IoUs to W&B, using global_step to align with training.
@@ -105,8 +143,8 @@ def validate_and_log(
             "epoch": epoch + 1,  # Log 1-indexed epoch
         }
         for i, iou_val in enumerate(ious):
-            wandb_log_dict[f"val/iou_class_{i}"] = iou_val
-        wandb.log(wandb_log_dict, step=global_step)  # Log against global_step
+            wandb_log_dict[f"val/iou_class_{i}"] = float(iou_val)
+        wandb.log(wandb_log_dict, step=global_step)  # Log against global training step
 
     print(
         f"\nValidation Epoch {epoch + 1}: Avg Loss: {avg_val_loss:.4f}, Mean IoU: {mean_iou:.4f}"

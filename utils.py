@@ -1,34 +1,51 @@
+"""
+Collection of utility functions for the semantic segmentation project.
+
+Includes learning rate schedulers, metrics calculation (mIoU, FLOPs, latency),
+Weights & Biases integration helpers, and image visualization utilities.
+"""
 # This file is a collection of various helper functions used across different parts of the project.
 # This includes learning rate scheduling, metrics calculation (mIoU, FLOPs, latency), and Weights & Biases integration helpers.
 
 import time
+from typing import Any, Dict, List
 
 import numpy as np
 import torch
 from fvcore.nn import FlopCountAnalysis, flop_count_table
+from torch import optim
 
 import wandb
-from data_loader import (  # For W&B image logging
-    CITYSCAPES_COLOR_MAP_TRAIN_IDS,
-    tensor_to_rgb,
-)
+from data_loader import CITYSCAPES_COLOR_MAP_TRAIN_IDS, tensor_to_rgb
+
+# Type alias for the config module for clarity
+ConfigModule = Any  # Could be replaced with a Protocol if config structure is strict
 
 
 # --- Learning Rate Scheduler ---
-def poly_lr_scheduler(optimizer, initial_learning_rate, current_iter, max_iter, power):
+def poly_lr_scheduler(
+    optimizer: optim.Optimizer,
+    initial_learning_rate: float,
+    current_iter: int,
+    max_iter: int,
+    power: float,
+) -> float:
     """
-    Polynomial decay of learning rate.
-    Applies decay to the provided 'initial_learning_rate' and updates
-    the single parameter group in the optimizer.
+    Applies polynomial decay to the learning rate.
+
+    This scheduler assumes the optimizer has a single parameter group,
+    and it updates the learning rate of this group based on the provided
+    initial learning rate and the polynomial decay formula.
 
     Args:
-        optimizer: The PyTorch optimizer.
-        initial_learning_rate (float): The starting learning rate from which to decay.
-        current_iter (int): Current training iteration.
-        max_iter (int): Total number of training iterations.
-        power (float): The exponent for the polynomial decay.
+        optimizer: The PyTorch optimizer instance.
+        initial_learning_rate: The starting learning rate from which to decay.
+        current_iter: The current training iteration (batch number).
+        max_iter: The total number of training iterations.
+        power: The exponent for the polynomial decay formula (e.g., 0.9).
+
     Returns:
-        float: The newly calculated (decayed) learning rate.
+        The newly calculated (decayed) learning rate applied to the optimizer.
     """
 
     lr_scale_factor = (1 - current_iter / max_iter) ** power
@@ -41,17 +58,21 @@ def poly_lr_scheduler(optimizer, initial_learning_rate, current_iter, max_iter, 
 
 
 # --- mIoU Calculation Helpers ---
-def fast_hist(label_true, label_pred, n_class):
+def fast_hist(
+    label_true: np.ndarray, label_pred: np.ndarray, n_class: int
+) -> np.ndarray:
     """
-    Function for calculating the confusion matrix (hist)
+    Computes the confusion matrix for evaluating semantic segmentation.
 
     Args:
-        label_true (_type_): flattened arrays of ground truth
-        label_pred (_type_): predicted class IDs
-        n_class (_type_): number of classes
+        label_true: A flattened NumPy array of ground truth labels (integers).
+        label_pred: A flattened NumPy array of predicted class IDs (integers).
+        n_class: The total number of classes.
 
     Returns:
-        _type_: N x N confusion matrix where N is n_class.
+        An N x N NumPy array representing the confusion matrix, where N is n_class.
+        The element at (i, j) is the number of pixels with true label i
+        and predicted label j.
     """
     mask = (
         (label_true >= 0)
@@ -67,203 +88,227 @@ def fast_hist(label_true, label_pred, n_class):
     return hist
 
 
-def per_class_iou(hist):
+def per_class_iou(hist: np.ndarray) -> np.ndarray:
     """
-    Takes the confusion matrix hist and calculates IoU for each class
+    Calculates Intersection over Union (IoU) for each class from a confusion matrix.
 
     Args:
-        hist (_type_): confusion matrix
+        hist: An N x N NumPy array representing the confusion matrix,
+              where N is the number of classes.
 
     Returns:
-        _type_: _description_
+        A 1D NumPy array of length N, where each element is the IoU for the
+        corresponding class. IoU = TP / (TP + FP + FN).
     """
     epsilon = 1e-5  # Small value to avoid division by zero
+    # TP = diag(hist)
+    # FP = sum(hist, axis=0) - diag(hist)
+    # FN = sum(hist, axis=1) - diag(hist)
+    # IoU = TP / (TP + FP + FN) = diag(hist) / (sum(axis=1) + sum(axis=0) - diag(hist))
     ious = np.diag(hist) / (
         hist.sum(axis=1) + hist.sum(axis=0) - np.diag(hist) + epsilon
     )
-    ious = np.nan_to_num(ious, nan=0.0)  # Replace NaN with 0.0
+    # Replace potential NaN values (e.g., if a class has no true positives
+    # and no false positives/negatives, resulting in 0/0) with 0.0.
+    ious = np.nan_to_num(ious, nan=0.0)
 
     return ious
 
 
 # --- W&B Initialization ---
-def init_wandb(cfg, effective_optimizer_config):
-    """Initializes a new Weights & Biases run.
+def init_wandb(
+    cfg_module: ConfigModule, effective_optimizer_config: Dict[str, Any]
+) -> None:
+    """
+    Initializes a Weights & Biases (wandb) run for experiment tracking.
 
     Args:
-        cfg (_type_): configuration object containing the parameters for the run.
+        cfg_module: The imported configuration module (e.g., `config.py`).
+        effective_optimizer_config: A dictionary containing the actual optimizer
+            settings being used for the run (e.g., type, learning rate, momentum).
     """
     try:
-        base_config_dict = {
-            "epochs": cfg.TRAIN_EPOCHS,
-            "batch_size": cfg.BATCH_SIZE,
-            "image_height": cfg.IMG_HEIGHT,
-            "image_width": cfg.IMG_WIDTH,
-            "num_classes": cfg.NUM_CLASSES,
-            "lr_scheduler_power": cfg.LR_SCHEDULER_POWER,
-            "device": str(cfg.DEVICE),
-            "dataset_path": cfg.DATASET_PATH,
-            "pretrained_model_path": cfg.PRETRAINED_MODEL_PATH,
-            "norm_mean": cfg.NORM_MEAN,
-            "norm_std": cfg.NORM_STD,
+        base_config_dict: Dict[str, Any] = {
+            "script_epochs": cfg_module.TRAIN_EPOCHS,  # Renamed to avoid conflict with wandb internal 'epochs'
+            "batch_size": cfg_module.BATCH_SIZE,
+            "image_height": cfg_module.IMG_HEIGHT,
+            "image_width": cfg_module.IMG_WIDTH,
+            "num_classes": cfg_module.NUM_CLASSES,
+            "lr_scheduler_power": cfg_module.LR_SCHEDULER_POWER,
+            "device": str(cfg_module.DEVICE),
+            "dataset_path": cfg_module.DATASET_PATH,
+            "pretrained_model_path": cfg_module.PRETRAINED_MODEL_PATH,
+            "norm_mean": cfg_module.NORM_MEAN,
+            "norm_std": cfg_module.NORM_STD,
         }
         # Merge base config with effective optimizer config
-        full_config = {**base_config_dict, **effective_optimizer_config}
+        full_config: Dict[str, Any] = {**base_config_dict, **effective_optimizer_config}
 
         wandb.init(
-            project=cfg.WANDB_PROJECT_NAME,
-            entity=cfg.WANDB_ENTITY,
+            project=cfg_module.WANDB_PROJECT_NAME,
+            entity=cfg_module.WANDB_ENTITY,
             config=full_config,
         )
         print("Weights & Biases initialized successfully.")
     except Exception as e:
         print(f"Error initializing W&B: {e}. W&B logging will be disabled.")
-        # Optionally, create a dummy wandb object so calls to wandb.log don't crash
-        # class DummyWandB:
-        #     def __init__(self): self.run = None
-        #     def log(self, *args, **kwargs): pass
-        #     def summary(self, *args, **kwargs): pass # if you use summary
-        #     def finish(self, *args, **kwargs): pass
-        # wandb = DummyWandB() # This is a bit hacky, better to check wandb.run
 
 
 # --- W&B Image Logging ---
 def log_segmentation_to_wandb(
-    images, true_masks, pred_masks, epoch, current_config, max_images=4
+    images: torch.Tensor,
+    true_masks: torch.Tensor,
+    pred_masks: torch.Tensor,
+    epoch: int,  # Current epoch number (1-indexed for display)
+    current_config: ConfigModule,  # The config module (e.g., cfg from main.py)
+    max_images: int = 4,
 ):
-    """Logs sample input images, their ground truth segmentation masks, and the model's predicted masks to W&B.
+    """
+    Logs sample input images with their ground truth and predicted segmentation
+    masks to Weights & Biases for visual inspection.
 
     Args:
-        images (_type_): Batch of input images.
-        true_masks (_type_): Corresponding label tensors.
-        pred_masks (_type_): Corresponding label tensors.
-        epoch (_type_): _description_
-        current_config (_type_): _description_
-        max_images (int, optional): _description_. Defaults to 4.
+        images: A batch of input image tensors, expected shape (B, C, H, W),
+                typically normalized.
+        true_masks: A batch of ground truth label tensors, shape (B, H, W).
+        pred_masks: A batch of predicted label tensors, shape (B, H, W).
+        epoch: The current epoch number (1-indexed, for labeling in W&B).
+        current_config: The configuration module (e.g., imported `config.py`)
+                        containing `NORM_MEAN` and `NORM_STD` for denormalization.
+        max_images: The maximum number of image-mask sets to log from the batch.
     """
     if not wandb.run:
         return
 
     num_to_log = min(max_images, images.shape[0])
-    log_dict = {}
+    log_dict: Dict[str, wandb.Image] = {}
 
-    mean = torch.tensor(current_config.NORM_MEAN, device=images.device).view(1, 3, 1, 1)
-    std = torch.tensor(current_config.NORM_STD, device=images.device).view(1, 3, 1, 1)
+    mean_tensor = torch.tensor(current_config.NORM_MEAN, device=images.device).view(
+        1, 3, 1, 1
+    )
+    std_tensor = torch.tensor(current_config.NORM_STD, device=images.device).view(
+        1, 3, 1, 1
+    )
 
     for i in range(num_to_log):
-        img = (
-            (images[i].clone() * std) + mean
-        )  # Denormalize a clone, It denormalizes the input images for better visualization.
-        img = img.clamp(0, 1)
+        # Denormalize image for visualization
+        img_to_log: torch.Tensor = (images[i].clone() * std_tensor) + mean_tensor
+        img_to_log = img_to_log.clamp(0, 1)  # Ensure pixel values are in [0, 1]
 
-        # Use CITYSCAPES_COLOR_MAP_TRAIN_IDS from data_loader.py for class labels if needed
+        # Convert label tensors to RGB images
+        true_mask_rgb: np.ndarray = tensor_to_rgb(true_masks[i])
+        pred_mask_rgb: np.ndarray = tensor_to_rgb(pred_masks[i])
+
         wandb_image = wandb.Image(
-            img,
+            img_to_log,  # The denormalized input image
             masks={
                 "ground_truth": {
-                    "mask_data": tensor_to_rgb(true_masks[i]),
+                    "mask_data": true_mask_rgb,
                     "class_labels": CITYSCAPES_COLOR_MAP_TRAIN_IDS,
                 },
                 "prediction": {
-                    "mask_data": tensor_to_rgb(pred_masks[i]),
+                    "mask_data": pred_mask_rgb,
                     "class_labels": CITYSCAPES_COLOR_MAP_TRAIN_IDS,
                 },
             },
         )
-        log_dict[f"Val_Epoch_{epoch}_Sample_{i}"] = wandb_image
+        log_dict[f"Validation_Epoch_{epoch}_Sample_{i + 1}"] = wandb_image
 
     if log_dict:
         wandb.log(
             log_dict
-        )  # step will be managed by global step in main training loop or by epoch
+        )  # W&B handles step automatically based on global step or epoch logs
 
 
 # --- Performance Metrics (FLOPs, Latency) ---
 @torch.no_grad()
 def calculate_performance_metrics(
-    model, device, img_height, img_width, latency_iters, warmup_iters
-):
-    """Calculates FLOPs, number of parameters, latency, and FPS, as required by the project.
+    model: torch.nn.Module,
+    device: torch.device,
+    img_height: int,
+    img_width: int,
+    latency_iters: int,
+    warmup_iters: int,
+) -> Dict[str, Any]:
+    """
+    Calculates FLOPs, number of parameters, latency, and FPS for a given model.
 
     Args:
-        model (_type_): _description_
-        device (_type_): _description_
-        img_height (_type_): _description_
-        img_width (_type_): _description_
-        latency_iters (_type_): _description_
-        warmup_iters (_type_): _description_
+        model: The PyTorch model (nn.Module) to evaluate.
+        device: The PyTorch device to run the model on for latency tests.
+        img_height: The height of the dummy input image for FLOPs/latency.
+        img_width: The width of the dummy input image for FLOPs/latency.
+        latency_iters: The number of iterations for averaging latency.
+        warmup_iters: The number of warmup iterations before timing latency.
 
     Returns:
-        _type_: _description_
+        A dictionary containing performance metrics:
+        - 'flops_g' (float): GigaFLOPs.
+        - 'params_m' (float): Total parameters in Millions.
+        - 'flop_table' (str): Formatted string table of FLOPs by module.
+        - 'mean_latency_ms' (float): Mean inference latency in milliseconds.
+        - 'std_latency_ms' (float): Standard deviation of latency.
+        - 'mean_fps' (float): Mean Frames Per Second.
+        - 'std_fps' (float): Standard deviation of FPS.
+        Values might be -1 or error strings if calculation fails.
     """
-    model.eval()
-    results = {}
-    dummy_image = torch.randn(1, 3, img_height, img_width).to(
-        device
-    )  # Creates a sample input tensor.
+    model.eval()  # Set model to evaluation mode
+    results: Dict[str, Any] = {}
+    # Create a dummy input tensor with batch size 1, 3 color channels
+    dummy_image: torch.Tensor = torch.randn(1, 3, img_height, img_width).to(device)
 
     print("Calculating FLOPs and Parameters...")
     try:
-        flops_analyzer = FlopCountAnalysis(
-            model, dummy_image
-        )  # (fvcore usage from project description) Uses fvcore to analyze the model's operations with the dummy input.
-
-        results["flops_g"] = flops_analyzer.total() / 1e9  # Total FLOPs in GigaFLOPs
-
-        results["params_m"] = (
-            sum(p.numel() for p in model.parameters()) / 1e6
-        )  # Calculates total parameters in Millions.
-
-        results["flop_table"] = flop_count_table(
-            flops_analyzer, max_depth=3
-        )  # Generates a formatted table of FLOPs per module.
+        # fvcore for FLOPs and parameter count
+        flops_analyzer = FlopCountAnalysis(model, dummy_image)
+        results["flops_g"] = flops_analyzer.total() / 1e9
+        # Calculate total parameters (both trainable and non-trainable)
+        results["params_m"] = sum(p.numel() for p in model.parameters()) / 1e6
+        results["flop_table"] = flop_count_table(flops_analyzer, max_depth=3)
     except Exception as e:
         print(f"Error calculating FLOPs/Params: {e}")
-        results["flops_g"], results["params_m"], results["flop_table"] = (
-            -1,
-            -1,
-            "Error calculating FLOPs/Params.",
-        )
+        results["flops_g"] = -1.0
+        results["params_m"] = -1.0
+        results["flop_table"] = "Error during FLOPs/Params calculation."
 
     print(
-        f"Calculating Latency (warmup: {warmup_iters}, iterations: {latency_iters})..."
+        f"Calculating Latency (warmup: {warmup_iters} iters, measurement: {latency_iters} iters)..."
     )
-    latencies_ms = []
-    # Warm-up GPU (Latency calculation pseudo-code)
-    # Runs the model `warmup_iters` times to stabilize GPU clocks and cache memory.
-    for _ in range(warmup_iters):
-        _ = model(dummy_image)
+    latencies_ms: List[float] = []
+    try:
+        # Warm-up iterations
+        for _ in range(warmup_iters):
+            _ = model(dummy_image)
 
-    # Latency measurement (Latency calculation pseudo-code)
-    # Runs the model `latency_iters` times, timing each forward pass (torch.cuda.synchronize is used for accurate GPU timing).
-    for i in range(latency_iters):
-        torch.cuda.synchronize(device=device)
-        start_time = time.time()
-        _ = model(dummy_image)
-        torch.cuda.synchronize(device=device)
-        latencies_ms.append((time.time() - start_time) * 1000)  # milliseconds
-        if (i + 1) % (latency_iters // 10 or 1) == 0:
-            print(f" Latency iter {i + 1}/{latency_iters}")
+        # Latency measurement iterations
+        for i in range(latency_iters):
+            if device.type == "cuda":
+                torch.cuda.synchronize(
+                    device=device
+                )  # Ensure previous CUDA ops are done
+            start_time = time.perf_counter()  # More precise for short durations
+            _ = model(dummy_image)
+            if device.type == "cuda":
+                torch.cuda.synchronize(device=device)  # Ensure model inference is done
+            end_time = time.perf_counter()
+            latencies_ms.append(
+                (end_time - start_time) * 1000
+            )  # Convert to milliseconds
+            if (i + 1) % (latency_iters // 10 or 1) == 0:
+                print(f" Latency iteration {i + 1}/{latency_iters} completed.")
+    except Exception as e:
+        print(f"Error during latency calculation: {e}")
 
-    # Calculates mean/std latency (in ms) and mean/std FPS.
     if latencies_ms:
-        results["mean_latency_ms"] = np.mean(
-            latencies_ms
-        )  # (Latency calculation pseudo-code)
-        results["std_latency_ms"] = np.std(
-            latencies_ms
-        )  # (Latency calculation pseudo-code)
-        fps_list = [
-            1000.0 / l for l in latencies_ms if l > 0
-        ]  # (Latency calculation pseudo-code)
-        results["mean_fps"] = (
-            np.mean(fps_list) if fps_list else 0
-        )  # (Latency calculation pseudo-code)
-        results["std_fps"] = (
-            np.std(fps_list) if fps_list else 0
-        )  # (Latency calculation pseudo-code)
-    else:
-        results["mean_latency_ms"], results["std_latency_ms"] = -1, -1
-        results["mean_fps"], results["std_fps"] = -1, -1
+        results["mean_latency_ms"] = np.mean(latencies_ms)
+        results["std_latency_ms"] = np.std(latencies_ms)
+        fps_list: List[float] = [1000.0 / l for l in latencies_ms if l > 0]
+        results["mean_fps"] = np.mean(fps_list) if fps_list else 0.0
+        results["std_fps"] = np.std(fps_list) if fps_list else 0.0
+    else:  # Fill with defaults if latency calculation failed or produced no results
+        results["mean_latency_ms"] = -1.0
+        results["std_latency_ms"] = -1.0
+        results["mean_fps"] = -1.0
+        results["std_fps"] = -1.0
 
     return results
