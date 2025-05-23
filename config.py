@@ -21,16 +21,17 @@ PRETRAINED_MODEL_PATH = f"{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_
 # --- Checkpoint Settings ---
 # Directory to save all checkpoints (latest, best, periodic)
 CHECKPOINT_DIR = f"{ROOT_DIR}/checkpoints"
-LATEST_CHECKPOINT_FILENAME = "latest_checkpoint.pth"
-BEST_CHECKPOINT_FILENAME = (
-    "best_miou_checkpoint.pth"  # For the model with the best mIoU
-)
+# File for the model with the best mIoU found so far (continuously updated)
+BEST_CHECKPOINT_FILENAME = "best_miou_checkpoint.pth"
+# File for the periodic checkpoint, this single file will be OVERWRITTEN periodically
+CHECKPOINT_FILENAME = "checkpoint.pth"
+
 # Path to a specific checkpoint to resume from. Set via CLI --resume_checkpoint argument,
-# or manually edit thiing to a valid path if you always want to try resuming from it.
-# Example: None, or '/content/RTDA_SemanticSegmentation_Project/checkpoints/latest_checkpoint.pth'
+# or manually editing to a valid path if you always want to try resuming from it.
+# Example: None, or '/content/RTDA_SemanticSegmentation_Project/checkpoints/best_miou_checkpoint.pth'
 RESUME_CHECKPOINT_PATH = None
 # How often to save a periodic checkpoint (e.g., every N epochs). Set to 0 or less to disable.
-SAVE_CHECKPOINT_FREQ_EPOCH = 1  # Saves a checkpoint like 'checkpoint_epoch_X.pth'
+SAVE_CHECKPOINT_FREQ_EPOCH = 5  # Saves/overwrites checkpoint.pth every epoch
 
 # --- Model & Dataset Parameters ---
 NUM_CLASSES = 19  # The number of semantic classes the model needs to predict. Cityscapes has 19 evaluation classes.
@@ -41,12 +42,12 @@ IGNORE_INDEX = 255  # A special label value (often 255 for Cityscapes) that the 
 # --- DataLoader Settings ---
 # Number of worker processes for data loading.
 # For Colab T4, 2 is suggested. For A100, can try 2 or 4.
-DATALOADER_NUM_WORKERS = 2  # Default value, can be adjusted based on environment
+DATALOADER_NUM_WORKERS = 4  # Default value, can be adjusted based on environment
 
 # --- Training Hyperparameters ---
 TRAIN_EPOCHS = 50  # The total number of times the training loop will iterate over the entire training dataset (50 epochs for Step 2a).
 # Try 8 if using A100
-BATCH_SIZE = 4  # The number of images processed in one forward/backward pass during training. Adjust based on GPU memory.
+BATCH_SIZE = 8  # The number of images processed in one forward/backward pass during training. Adjust based on GPU memory.
 LR_SCHEDULER_POWER = 0.9  # Parameter for the polynomial learning rate decay scheduler.
 
 # --- Optimizer Settings ---
@@ -100,7 +101,7 @@ VAL_TRANSFORMS = A.Compose(
 # --- Logging & Saving ---
 PRINT_FREQ_BATCH = 100  # Print training status every N batches
 VALIDATE_FREQ_EPOCH = 1  # Validate every N epochs (set to 1 for validation each epoch)
-WANDB_LOG_IMAGES_FREQ_EPOCH = 5  # Log sample images to W&B every N epochs
+WANDB_LOG_IMAGES_FREQ_EPOCH = 10  # Log sample images to W&B every N epochs
 
 # --- Metrics Calculation (for final summary) ---
 # Parameters for calculating latency and FPS, as suggested in the project description's pseudo-code.

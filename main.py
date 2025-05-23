@@ -18,10 +18,10 @@ import os
 from typing import Any, Optional
 
 import torch
+import wandb  # For Weights & Biases integration
 from torch import GradScaler, nn, optim  # For type hints
 
 import config as cfg  # Your project's configuration module
-import wandb  # For Weights & Biases integration
 from data_loader import get_loaders
 from model_loader import get_model
 from train import train_one_epoch
@@ -280,11 +280,6 @@ def main():
         if scaler:
             checkpoint_state["scaler_state_dict"] = scaler.state_dict()
 
-        latest_checkpoint_path = os.path.join(
-            cfg.CHECKPOINT_DIR, cfg.LATEST_CHECKPOINT_FILENAME
-        )
-        save_checkpoint(checkpoint_state, latest_checkpoint_path)
-
         if is_best:
             best_checkpoint_path = os.path.join(
                 cfg.CHECKPOINT_DIR, cfg.BEST_CHECKPOINT_FILENAME
@@ -297,7 +292,7 @@ def main():
             and (epoch + 1) < effective_epochs
         ):
             periodic_checkpoint_path = os.path.join(
-                cfg.CHECKPOINT_DIR, f"checkpoint_epoch_{epoch + 1}.pth"
+                cfg.CHECKPOINT_DIR, cfg.CHECKPOINT_FILENAME
             )
             save_checkpoint(checkpoint_state, periodic_checkpoint_path)
 
