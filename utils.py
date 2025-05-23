@@ -13,11 +13,11 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
+import wandb
 from fvcore.nn import FlopCountAnalysis, flop_count_table
 from torch import GradScaler, nn, optim
 
-import wandb
-from data_loader import CITYSCAPES_COLOR_MAP_TRAIN_IDS, tensor_to_rgb
+from data_loader import CITYSCAPES_COLOR_MAP_TRAIN_IDS
 
 # Type alias for the config module for clarity
 ConfigModule = Any  # Could be replaced with a Protocol if config structure is strict
@@ -158,12 +158,12 @@ def init_wandb(
 # --- W&B Image Logging ---
 def log_segmentation_to_wandb(
     images: torch.Tensor,
-    true_masks: torch.Tensor,
-    pred_masks: torch.Tensor,
+    true_masks: torch.Tensor,  # These are the 2D label ID tensors (B, H, W)
+    pred_masks: torch.Tensor,  # These are also 2D label ID tensors (B, H, W)
     epoch: int,  # Current epoch number (1-indexed for display)
-    current_config: ConfigModule,  # The config module (e.g., cfg from main.py)
+    current_config: ConfigModule,  # The config module (e.g., cfg)
     max_images: int = 4,
-):
+) -> None:
     """
     Logs sample input images with their ground truth and predicted segmentation
     masks to Weights & Biases for visual inspection.
@@ -171,54 +171,66 @@ def log_segmentation_to_wandb(
     Args:
         images: A batch of input image tensors, expected shape (B, C, H, W),
                 typically normalized.
-        true_masks: A batch of ground truth label tensors, shape (B, H, W).
-        pred_masks: A batch of predicted label tensors, shape (B, H, W).
+        true_masks: A batch of ground truth label tensors, shape (B, H, W) or (B, 1, H, W).
+        pred_masks: A batch of predicted label tensors, shape (B, H, W) or (B, 1, H, W).
         epoch: The current epoch number (1-indexed, for labeling in W&B).
         current_config: The configuration module (e.g., imported `config.py`)
                         containing `NORM_MEAN` and `NORM_STD` for denormalization.
         max_images: The maximum number of image-mask sets to log from the batch.
     """
-    if not wandb.run:
+    if not wandb.run:  # Check if wandb run is active
         return
 
-    num_to_log = min(max_images, images.shape[0])
+    num_to_log: int = min(max_images, images.shape[0])
     log_dict: Dict[str, wandb.Image] = {}
 
-    mean_tensor = torch.tensor(current_config.NORM_MEAN, device=images.device).view(
-        1, 3, 1, 1
-    )
-    std_tensor = torch.tensor(current_config.NORM_STD, device=images.device).view(
-        1, 3, 1, 1
-    )
+    # Ensure NORM_MEAN and NORM_STD are available in current_config
+    norm_mean = getattr(current_config, "NORM_MEAN", (0.0, 0.0, 0.0))
+    norm_std = getattr(current_config, "NORM_STD", (1.0, 1.0, 1.0))
+
+    mean_tensor = torch.tensor(norm_mean, device=images.device).view(1, 3, 1, 1)
+    std_tensor = torch.tensor(norm_std, device=images.device).view(1, 3, 1, 1)
 
     for i in range(num_to_log):
         # Denormalize image for visualization
         img_to_log: torch.Tensor = (images[i].clone() * std_tensor) + mean_tensor
-        img_to_log = img_to_log.clamp(0, 1)  # Ensure pixel values are in [0, 1]
+        img_to_log = img_to_log.clamp(0, 1)
 
-        # Convert label tensors to RGB images
-        true_mask_rgb: np.ndarray = tensor_to_rgb(true_masks[i])
-        pred_mask_rgb: np.ndarray = tensor_to_rgb(pred_masks[i])
+        # Prepare 2D numpy arrays for mask_data from the label ID tensors
+        true_mask_np_2d: np.ndarray = true_masks[i].cpu().numpy()
+        pred_mask_np_2d: np.ndarray = pred_masks[i].cpu().numpy()
+
+        # Ensure masks are 2D (H, W) by squeezing if they are (1, H, W)
+        if true_mask_np_2d.ndim == 3 and true_mask_np_2d.shape[0] == 1:
+            true_mask_np_2d = true_mask_np_2d.squeeze(0)
+        if pred_mask_np_2d.ndim == 3 and pred_mask_np_2d.shape[0] == 1:
+            pred_mask_np_2d = pred_mask_np_2d.squeeze(0)
+
+        # Final check for 2D
+        if true_mask_np_2d.ndim != 2 or pred_mask_np_2d.ndim != 2:
+            print(
+                f"Warning: Skipping W&B image log for sample {i} due to unexpected mask dimensions. "
+                f"True mask shape: {true_masks[i].shape}, Pred mask shape: {pred_masks[i].shape}"
+            )
+            continue
 
         wandb_image = wandb.Image(
             img_to_log,  # The denormalized input image
             masks={
                 "ground_truth": {
-                    "mask_data": true_mask_rgb,
-                    "class_labels": CITYSCAPES_COLOR_MAP_TRAIN_IDS,
+                    "mask_data": true_mask_np_2d,  # Pass the 2D numpy array of class IDs
+                    "class_labels": CITYSCAPES_COLOR_MAP_TRAIN_IDS,  # Provide the ID -> color mapping
                 },
                 "prediction": {
-                    "mask_data": pred_mask_rgb,
-                    "class_labels": CITYSCAPES_COLOR_MAP_TRAIN_IDS,
+                    "mask_data": pred_mask_np_2d,  # Pass the 2D numpy array of class IDs
+                    "class_labels": CITYSCAPES_COLOR_MAP_TRAIN_IDS,  # Provide the ID -> color mapping
                 },
             },
         )
         log_dict[f"Validation_Epoch_{epoch}_Sample_{i + 1}"] = wandb_image
 
     if log_dict:
-        wandb.log(
-            log_dict
-        )  # W&B handles step automatically based on global step or epoch logs
+        wandb.log(log_dict)
 
 
 # --- Performance Metrics (FLOPs, Latency) ---
