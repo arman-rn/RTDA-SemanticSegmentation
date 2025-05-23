@@ -10,11 +10,27 @@ WANDB_ENTITY = "RTDA-SemSeg"  # Your W&B username or team name, if None, it uses
 
 # --- Project Paths ---
 ROOT_DIR = "."
+# Local
 DATASET_PATH = f"{ROOT_DIR}/data/Cityscapes"
-PRETRAINED_MODEL_PATH = f"{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_imagenet.pth"  # Path to the ResNet-101 weights pretrained on ImageNet, used to initialize the backbone of your DeepLabV2 model. The project specifies using a backbone pre-trained on ImageNet.
+# Example for Colab after gdown to /content/datasets/: '/content/datasets/cityscapes'
 
-SAVE_MODEL_DIR = f"{ROOT_DIR}/trained_models"  #  Directory where your trained models (especially the best one) will be saved.
-BEST_MODEL_NAME = "deeplabv2_cityscapes_best_step2a.pth"  # Filename for the best performing model saved during training.
+# Local
+PRETRAINED_MODEL_PATH = f"{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_imagenet.pth"  # Path to the ResNet-101 weights pretrained on ImageNet, used to initialize the backbone of your DeepLabV2 model. The project specifies using a backbone pre-trained on ImageNet.
+# Example for Colab if model is downloaded by gdown to project: f'{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_imagenet.pth'
+
+# --- Checkpoint Settings ---
+# Directory to save all checkpoints (latest, best, periodic)
+CHECKPOINT_DIR = f"{ROOT_DIR}/checkpoints"
+LATEST_CHECKPOINT_FILENAME = "latest_checkpoint.pth"
+BEST_CHECKPOINT_FILENAME = (
+    "best_miou_checkpoint.pth"  # For the model with the best mIoU
+)
+# Path to a specific checkpoint to resume from. Set via CLI --resume_checkpoint argument,
+# or manually edit thiing to a valid path if you always want to try resuming from it.
+# Example: None, or '/content/RTDA_SemanticSegmentation_Project/checkpoints/latest_checkpoint.pth'
+RESUME_CHECKPOINT_PATH = None
+# How often to save a periodic checkpoint (e.g., every N epochs). Set to 0 or less to disable.
+SAVE_CHECKPOINT_FREQ_EPOCH = 1  # Saves a checkpoint like 'checkpoint_epoch_X.pth'
 
 # --- Model & Dataset Parameters ---
 NUM_CLASSES = 19  # The number of semantic classes the model needs to predict. Cityscapes has 19 evaluation classes.
@@ -23,16 +39,14 @@ IMG_WIDTH = 1024  # The target resolution for training and testing images (1024x
 IGNORE_INDEX = 255  # A special label value (often 255 for Cityscapes) that the loss function should ignore. This is typically used for "void" or "unlabeled" regions in the ground truth masks.
 
 # --- DataLoader Settings ---
-# 8 if you're using A100
+# Number of worker processes for data loading.
+# For Colab T4, 2 is suggested. For A100, can try 2 or 4.
 DATALOADER_NUM_WORKERS = 2  # Default value, can be adjusted based on environment
 
 # --- Training Hyperparameters ---
 TRAIN_EPOCHS = 50  # The total number of times the training loop will iterate over the entire training dataset (50 epochs for Step 2a).
 # Try 8 if using A100
 BATCH_SIZE = 4  # The number of images processed in one forward/backward pass during training. Adjust based on GPU memory.
-# LEARNING_RATE = 2.5e-4  # The initial learning rate for the optimizer. The DeepLabV2 model uses a differential learning rate where the head might have a 10x higher LR than the backbone. This LEARNING_RATE usually refers to the backbone's LR.
-# OPTIMIZER_MOMENTUM = 0.9  # Common parameters for the SGD optimizer.
-# OPTIMIZER_WEIGHT_DECAY = 5e-4  # Common parameters for the SGD optimizer.
 LR_SCHEDULER_POWER = 0.9  # Parameter for the polynomial learning rate decay scheduler.
 
 # --- Optimizer Settings ---
@@ -48,6 +62,8 @@ SGD_MOMENTUM = 0.9
 
 # Adam specific parameters
 ADAM_LEARNING_RATE = 1e-4  # Typical starting LR for Adam
+# ADAM_BETA1 = 0.9  # Beta1 parameter for Adam optimizer
+# ADAM_BETA2 = 0.999  # Beta2 parameter for Adam optimizer
 
 # --- Hardware ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

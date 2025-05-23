@@ -7,13 +7,14 @@ Weights & Biases integration helpers, and image visualization utilities.
 # This file is a collection of various helper functions used across different parts of the project.
 # This includes learning rate scheduling, metrics calculation (mIoU, FLOPs, latency), and Weights & Biases integration helpers.
 
+import os
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
 from fvcore.nn import FlopCountAnalysis, flop_count_table
-from torch import optim
+from torch import GradScaler, nn, optim
 
 import wandb
 from data_loader import CITYSCAPES_COLOR_MAP_TRAIN_IDS, tensor_to_rgb
@@ -312,3 +313,114 @@ def calculate_performance_metrics(
         results["std_fps"] = -1.0
 
     return results
+
+
+# --- Checkpoint Helper Functions ---
+def save_checkpoint(state: Dict[str, Any], filepath: str) -> None:
+    """
+    Saves the training state to a checkpoint file.
+
+    Args:
+        state: A dictionary containing the state to save (e.g., epoch,
+               model_state_dict, optimizer_state_dict, scaler_state_dict, best_miou).
+        filepath: The path where the checkpoint file will be saved.
+    """
+    print(f"Saving checkpoint to {filepath}...")
+    # Ensure the directory exists
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    torch.save(state, filepath)
+    print(f"Checkpoint saved successfully to {filepath}")
+
+    # Optional: Save to W&B as an artifact if a run is active
+    if wandb.run:
+        try:
+            # Use policy="live" if you want W&B to keep this file updated (e.g., for 'latest_checkpoint.pth')
+            # For best model or periodic, you might not need "live" or can use default.
+            wandb.save(filepath, base_path=os.path.dirname(filepath), policy="live")
+            print(
+                f"Checkpoint '{os.path.basename(filepath)}' also saved to W&B artifacts."
+            )
+        except Exception as e:
+            print(f"Warning: Could not save checkpoint to W&B artifacts: {e}")
+
+
+def load_checkpoint(
+    filepath: str,
+    model: nn.Module,
+    optimizer: Optional[optim.Optimizer] = None,
+    scaler: Optional[GradScaler] = None,
+    device: Optional[torch.device] = None,
+) -> Dict[str, Any]:
+    """
+    Loads training state from a checkpoint file.
+
+    Args:
+        filepath: Path to the checkpoint file.
+        model: The model instance to load the state_dict into.
+        optimizer: The optimizer instance to load the state_dict into (optional).
+        scaler: The GradScaler instance to load the state_dict into (optional).
+        device: The torch.device to map the loaded tensors to. If None, loads to CPU first.
+
+    Returns:
+        A dictionary containing the loaded state (epoch, global_step, best_miou, etc.),
+        or an empty dictionary if the checkpoint file is not found.
+    """
+    if not os.path.exists(filepath):
+        print(f"Warning: Checkpoint file not found at '{filepath}'. Cannot resume.")
+        return {}  # Return empty dict to indicate no checkpoint was loaded
+
+    print(f"Loading checkpoint from '{filepath}'...")
+    map_location = (
+        device if device else torch.device("cpu")
+    )  # Load to specified device or CPU
+
+    try:
+        checkpoint: Dict[str, Any] = torch.load(filepath, map_location=map_location)
+    except Exception as e:
+        print(
+            f"Error loading checkpoint file '{filepath}': {e}. Returning empty state."
+        )
+        return {}
+
+    if "model_state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["model_state_dict"])
+    else:
+        print(
+            f"Warning: 'model_state_dict' not found in checkpoint '{filepath}'. Model weights not loaded."
+        )
+
+    if optimizer and "optimizer_state_dict" in checkpoint:
+        try:
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            # After loading optimizer state, if tensors were loaded to CPU via map_location,
+            # and the model/optimizer are meant to be on GPU, move optimizer states to GPU.
+            if device and device.type == "cuda":
+                for state in optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor):
+                            state[k] = v.to(device)
+            print("Optimizer state loaded.")
+        except Exception as e:
+            print(
+                f"Warning: Could not load optimizer state: {e}. Optimizer state may be reset."
+            )
+
+    if scaler and "scaler_state_dict" in checkpoint:
+        try:
+            scaler.load_state_dict(checkpoint["scaler_state_dict"])
+            print("GradScaler state loaded.")
+        except Exception as e:
+            print(
+                f"Warning: Could not load GradScaler state: {e}. Scaler state may be reset."
+            )
+
+    print("Checkpoint loaded successfully.")
+    # Return relevant information for resuming training
+    return {
+        "epoch": checkpoint.get(
+            "epoch", -1
+        ),  # Return -1 if not found, so start_epoch becomes 0
+        "global_step": checkpoint.get("global_step", 0),
+        "best_miou": checkpoint.get("best_miou", 0.0),
+        # Include any other saved metadata you need
+    }
