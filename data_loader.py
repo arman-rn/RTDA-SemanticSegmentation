@@ -1,3 +1,4 @@
+# data_loader.py
 """
 Handles dataset loading and provides PyTorch DataLoader instances.
 
@@ -5,21 +6,22 @@ This file uses dataset classes (e.g., CityScapes) and configurations
 from config.py to create PyTorch DataLoaders. DataLoaders are responsible
 for efficiently loading data in batches, shuffling, and enabling
 multi-process data loading for training and validation.
-It also includes utility functions for visualizing segmentation masks.
+It also includes utility functions for visualizing segmentation masks and class mappings.
 """
 
-# This file uses datasets class (cityscapes/gta5) and the configurations from config.py to create PyTorch DataLoader objects.
-# DataLoaders are responsible for efficiently loading data in batches, shuffling, and enabling multi-process data loading.
 from typing import Any, Dict, Tuple
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from torch.utils.data import Dataset as TorchDataset  # Alias to avoid confusion
 
 # Import the CityScapes class from your existing file
+# This assumes 'datasets.cityscapes.CityScapes' is a valid PyTorch Dataset class
 from datasets.cityscapes import CityScapes
 
-ConfigModule = Any
+# Type alias for the config module for clarity
+ConfigModule = Any  # Could be replaced with a Protocol if config structure is strict
 
 
 # --- DataLoader Getter Function ---
@@ -45,51 +47,53 @@ def get_loaders(config_obj: ConfigModule) -> Tuple[DataLoader, DataLoader]:
     """
     print(f"Loading training data from: {config_obj.DATASET_PATH}")
     print("Using CityScapes class from: datasets.cityscapes.py")
-    train_dataset = CityScapes(
+    train_dataset: TorchDataset = CityScapes(
         cityscapes_path=config_obj.DATASET_PATH,
         split="train",
         transforms=config_obj.TRAIN_TRANSFORMS,
     )
-    if not len(train_dataset):
-        print(
-            f"CRITICAL: Training dataset is empty. Check DATASET_PATH in config.py ('{config_obj.DATASET_PATH}') and the implementation of 'datasets/cityscapes.py'."
+    if not len(train_dataset):  # Check if the dataset loaded any samples
+        raise ValueError(
+            f"CRITICAL: Training dataset is empty. Check DATASET_PATH in config ('{config_obj.DATASET_PATH}') "
+            "and the implementation of 'datasets/cityscapes.py'."
         )
-    else:
-        print(f"Found {len(train_dataset)} training images.")
+    print(f"Found {len(train_dataset)} training images.")
 
     print(f"Loading validation data from: {config_obj.DATASET_PATH}")
-    val_dataset = CityScapes(
+    val_dataset: TorchDataset = CityScapes(
         cityscapes_path=config_obj.DATASET_PATH,
         split="val",
         transforms=config_obj.VAL_TRANSFORMS,
     )
-    if not len(val_dataset):
-        print(
-            f"CRITICAL: Validation dataset is empty. Check DATASET_PATH in config.py ('{config_obj.DATASET_PATH}') and the implementation of 'datasets/cityscapes.py'."
+    if not len(val_dataset):  # Check if the dataset loaded any samples
+        raise ValueError(
+            f"CRITICAL: Validation dataset is empty. Check DATASET_PATH in config ('{config_obj.DATASET_PATH}') "
+            "and the implementation of 'datasets/cityscapes.py'."
         )
-    else:
-        print(f"Found {len(val_dataset)} validation images.")
+    print(f"Found {len(val_dataset)} validation images.")
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=config_obj.BATCH_SIZE,
-        shuffle=True,  # Shuffle training data
-        num_workers=config_obj.DATALOADER_NUM_WORKERS,  # Number of parallel processes for data loading.
-        pin_memory=True,  # For faster data transfer to GPU. If True, copies tensors into CUDA pinned memory before returning them, which can speed up GPU transfers.
-        drop_last=True,  # Drops the last batch if it's smaller than BATCH_SIZE (good for training). If the dataset size is not divisible by the batch size, the last batch will be smaller. drop_last=True ignores this smaller batch.
+        shuffle=True,
+        num_workers=config_obj.DATALOADER_NUM_WORKERS,
+        pin_memory=True,  # Helps speed up CPU to GPU memory transfers
+        drop_last=True,  # Drop the last incomplete batch during training
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=1,  # Usually 1 for validation to get per-image metrics
-        shuffle=False,  # No need to shuffle validation data
+        batch_size=1,  # Typically 1 for validation for per-image metrics
+        shuffle=False,
         num_workers=config_obj.DATALOADER_NUM_WORKERS,
         pin_memory=True,
     )
     return train_loader, val_loader
 
 
-# --- For Visualization with W&B ---
-# A dictionary mapping Cityscapes class IDs (the 19 training IDs) to specific RGB colors for visualization.
+# --- Color and Name Mappings for Visualization ---
+
+# Color map for Cityscapes 19 evaluation classes + ignore label
+# Each class ID is mapped to an RGB tuple.
 CITYSCAPES_COLOR_MAP_TRAIN_IDS: Dict[int, Tuple[int, int, int]] = {
     0: (128, 64, 128),  # road
     1: (244, 35, 232),  # sidewalk
@@ -110,7 +114,31 @@ CITYSCAPES_COLOR_MAP_TRAIN_IDS: Dict[int, Tuple[int, int, int]] = {
     16: (0, 80, 100),  # train
     17: (0, 0, 230),  # motorcycle
     18: (119, 11, 32),  # bicycle
-    255: (0, 0, 0),  # ignore/void label often mapped to black
+    255: (0, 0, 0),  # ignore/void label (often mapped to black)
+}
+
+# Map of Class IDs to String Names for W&B class_labels argument
+CITYSCAPES_ID_TO_NAME_MAP: Dict[int, str] = {
+    0: "road",
+    1: "sidewalk",
+    2: "building",
+    3: "wall",
+    4: "fence",
+    5: "pole",
+    6: "traffic light",
+    7: "traffic sign",
+    8: "vegetation",
+    9: "terrain",
+    10: "sky",
+    11: "person",
+    12: "rider",
+    13: "car",
+    14: "truck",
+    15: "bus",
+    16: "train",
+    17: "motorcycle",
+    18: "bicycle",
+    255: "ignore/void",  # Include the ignore label if it might appear in masks
 }
 
 
@@ -122,18 +150,20 @@ def tensor_to_rgb(
     Converts a 2D integer label tensor to a 3D RGB color-coded NumPy image.
 
     This function takes a tensor where each pixel value represents a class ID
-    and maps these IDs to specified RGB colors for visualization purposes,
-    often used for logging segmentation masks to tools like Weights & Biases.
+    and maps these IDs to specified RGB colors for visualization purposes.
 
     Args:
-        label_tensor: A PyTorch tensor of shape (H, W) containing integer class IDs.
-            It's expected to be on the CPU before conversion to NumPy.
+        label_tensor: A PyTorch tensor of shape (H, W) or (1, H, W) containing
+            integer class IDs. Expected to be on CPU or moved to CPU.
         color_map: A dictionary mapping class IDs (int) to RGB color tuples
             (Tuple[int, int, int]). Defaults to `CITYSCAPES_COLOR_MAP_TRAIN_IDS`.
 
     Returns:
         A NumPy array of shape (H, W, 3) with dtype uint8, representing the
         RGB color-coded segmentation mask.
+
+    Raises:
+        ValueError: If the input label_tensor, after potential squeezing, is not 2D.
     """
     if label_tensor.is_cuda:
         label_tensor = label_tensor.cpu()
@@ -145,7 +175,8 @@ def tensor_to_rgb(
 
     if label_np.ndim != 2:
         raise ValueError(
-            f"Expected label_tensor to be 2D (H, W) or (1, H, W), but got shape {label_tensor.shape}"
+            f"Expected label_tensor to be 2D (H, W) or (1, H, W) after squeeze, "
+            f"but got shape {label_tensor.shape} (processed as {label_np.shape})"
         )
 
     output_rgb = np.zeros((label_np.shape[0], label_np.shape[1], 3), dtype=np.uint8)

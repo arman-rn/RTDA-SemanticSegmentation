@@ -17,7 +17,7 @@ import wandb
 from fvcore.nn import FlopCountAnalysis, flop_count_table
 from torch import GradScaler, nn, optim
 
-from data_loader import CITYSCAPES_COLOR_MAP_TRAIN_IDS
+from data_loader import CITYSCAPES_ID_TO_NAME_MAP
 
 # Type alias for the config module for clarity
 ConfigModule = Any  # Could be replaced with a Protocol if config structure is strict
@@ -219,11 +219,11 @@ def log_segmentation_to_wandb(
             masks={
                 "ground_truth": {
                     "mask_data": true_mask_np_2d,  # Pass the 2D numpy array of class IDs
-                    "class_labels": CITYSCAPES_COLOR_MAP_TRAIN_IDS,  # Provide the ID -> color mapping
+                    "class_labels": CITYSCAPES_ID_TO_NAME_MAP,  # Use ID -> String Name map
                 },
                 "prediction": {
                     "mask_data": pred_mask_np_2d,  # Pass the 2D numpy array of class IDs
-                    "class_labels": CITYSCAPES_COLOR_MAP_TRAIN_IDS,  # Provide the ID -> color mapping
+                    "class_labels": CITYSCAPES_ID_TO_NAME_MAP,  # Use ID -> String Name map
                 },
             },
         )
