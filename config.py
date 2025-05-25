@@ -14,13 +14,18 @@ ROOT_DIR = "."
 DATASET_PATH = f"{ROOT_DIR}/data/Cityscapes"
 # Example for Colab after gdown to /content/datasets/: '/content/datasets/cityscapes'
 
-# Local
-PRETRAINED_MODEL_PATH = f"{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_imagenet.pth"  # Path to the ResNet-101 weights pretrained on ImageNet, used to initialize the backbone of your DeepLabV2 model. The project specifies using a backbone pre-trained on ImageNet.
+# --- Model Selection ---
+# Choose 'deeplabv2' for Step 2a, 'bisenet' for Step 2b onwards
+MODEL_NAME = "bisenet"  # Options: "deeplabv2", "bisenet"
+
+# --- DeepLabV2 Specific ---
+# Path to the ResNet-101 weights pretrained on ImageNet, used to initialize the backbone of DeepLabV2.
+DEEPLABV2_PRETRAINED_BACKBONE_PATH = f"{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_imagenet.pth"  # Path to the ResNet-101 weights pretrained on ImageNet, used to initialize the backbone of your DeepLabV2 model. The project specifies using a backbone pre-trained on ImageNet.
 # Example for Colab if model is downloaded by gdown to project: f'{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_imagenet.pth'
 
 # --- Checkpoint Settings ---
 # Directory to save all checkpoints (latest, best, periodic)
-CHECKPOINT_DIR = f"{ROOT_DIR}/checkpoints"
+CHECKPOINT_DIR = f"{ROOT_DIR}/checkpoints/{MODEL_NAME}"
 # File for the model with the best mIoU found so far (continuously updated)
 BEST_CHECKPOINT_FILENAME = "best_miou_checkpoint.pth"
 # File for the periodic checkpoint, this single file will be OVERWRITTEN periodically
@@ -65,6 +70,11 @@ SGD_MOMENTUM = 0.9
 ADAM_LEARNING_RATE = 1e-4  # Typical starting LR for Adam
 # ADAM_BETA1 = 0.9  # Beta1 parameter for Adam optimizer
 # ADAM_BETA2 = 0.999  # Beta2 parameter for Adam optimizer
+
+# --- BiSeNet Specific Settings ---
+BISENET_CONTEXT_PATH = "resnet18"
+# Note: Pretrained weights for BiSeNet's ResNet18 backbone will be loaded from torchvision by default
+# by the build_contextpath.py script (which should be in models/bisenet/).
 
 # --- Hardware ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

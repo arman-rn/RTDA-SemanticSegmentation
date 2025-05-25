@@ -1,6 +1,6 @@
 """
 Main script for orchestrating the training and validation pipeline
-for DeepLabV2 semantic segmentation.
+for semantic segmentation.
 
 It handles:
 - Command-line argument parsing for overriding configurations.
@@ -21,7 +21,7 @@ import torch
 import wandb  # For Weights & Biases integration
 from torch import GradScaler, nn, optim  # For type hints
 
-import config as cfg  # Your project's configuration module
+import config as cfg
 from data_loader import get_loaders
 from model_loader import get_model
 from train import train_one_epoch
@@ -43,56 +43,97 @@ def main():
     """
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(
-        description="DeepLabV2 Semantic Segmentation Training Script"
+        description="Semantic Segmentation Training Script"
+    )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default=None,
+        choices=["deeplabv2", "bisenet"],
+        help="Model to train. Overrides config.MODEL_NAME if set.",
     )
     parser.add_argument(
         "--optimizer",
         type=str,
-        default=None,  # Default to None, will use config
-        choices=["sgd", "adam"],
-        help="Optimizer type to use (sgd or adam). Overrides config if set.",
-    )
-    parser.add_argument(
-        "--lr", type=float, default=None, help="Override learning rate from config."
-    )
-    parser.add_argument(
-        "--epochs",
-        type=int,
         default=None,
-        help="Override number of epochs from config.",
+        choices=["sgd", "adam"],
+        help="Optimizer type. Overrides config.OPTIMIZER_TYPE.",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=None, help="Learning rate. Overrides config."
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=None, help="Number of epochs. Overrides config."
     )
     parser.add_argument(
         "--resume_checkpoint",
         type=str,
-        default=None,  # Default is None, will check config next
-        help="Path to a checkpoint file to resume training from. Overrides config RESUME_CHECKPOINT_PATH.",
+        default=None,
+        help="Path to resume training from. Overrides config.",
     )
-
+    parser.add_argument(
+        "--dataset_path",
+        type=str,
+        default=None,
+        help="Path to dataset. Overrides config.",
+    )
+    parser.add_argument(
+        "--bisenet_context_path",
+        type=str,
+        default=None,
+        choices=["resnet18", "resnet101"],
+        help="Context path for BiSeNet. Overrides config.",
+    )
     args = parser.parse_args()
 
     # --- Determine Effective Configuration ---
     # Reload config in case it was changed (especially useful in notebooks)
     importlib.reload(cfg)
 
-    effective_optimizer_type = args.optimizer if args.optimizer else cfg.OPTIMIZER_TYPE
+    if args.model_name is not None:
+        cfg.MODEL_NAME = args.model_name
+    if args.dataset_path is not None:
+        cfg.DATASET_PATH = args.dataset_path
+    if (
+        args.bisenet_context_path is not None and cfg.MODEL_NAME == "bisenet"
+    ):  # Only apply if BiSeNet is the model
+        cfg.BISENET_CONTEXT_PATH = args.bisenet_context_path
+    if args.optimizer is not None:
+        cfg.OPTIMIZER_TYPE = args.optimizer
+    if args.epochs is not None:
+        cfg.TRAIN_EPOCHS = args.epochs
+    if args.resume_checkpoint is not None:
+        cfg.RESUME_CHECKPOINT_PATH = args.resume_checkpoint
 
-    effective_epochs = args.epochs if args.epochs is not None else cfg.TRAIN_EPOCHS
+    # Learning rate override needs to consider the chosen optimizer
+    if args.lr is not None:
+        if cfg.OPTIMIZER_TYPE.lower() == "sgd":
+            cfg.SGD_LEARNING_RATE = args.lr
+        elif cfg.OPTIMIZER_TYPE.lower() == "adam":
+            cfg.ADAM_LEARNING_RATE = args.lr
+        # If you add more optimizers, handle their LR override here
 
-    effective_optimizer_config_log = {"optimizer_type": effective_optimizer_type}
-    current_weight_decay = cfg.WEIGHT_DECAY
+    # CHECKPOINT_DIR depends on the finalized cfg.MODEL_NAME
+    cfg.CHECKPOINT_DIR = f"{cfg.ROOT_DIR}/checkpoints/{cfg.MODEL_NAME}"
 
-    if effective_optimizer_type.lower() == "sgd":
-        current_base_lr = args.lr if args.lr is not None else cfg.SGD_LEARNING_RATE
-        effective_optimizer_config_log.update(
+    current_weight_decay = (
+        cfg.WEIGHT_DECAY
+    )  # Usually not overridden by CLI in this setup
+
+    optimizer_log_config = {"optimizer_type": cfg.OPTIMIZER_TYPE}
+
+    if cfg.OPTIMIZER_TYPE.lower() == "sgd":
+        current_base_lr = cfg.SGD_LEARNING_RATE
+        optimizer_log_config.update(
             {
                 "learning_rate": current_base_lr,
                 "momentum": cfg.SGD_MOMENTUM,
                 "weight_decay": current_weight_decay,
             }
         )
-    elif effective_optimizer_type.lower() == "adam":
-        current_base_lr = args.lr if args.lr is not None else cfg.ADAM_LEARNING_RATE
-        effective_optimizer_config_log.update(
+    elif cfg.OPTIMIZER_TYPE.lower() == "adam":
+        current_base_lr = cfg.ADAM_LEARNING_RATE
+        optimizer_log_config.update(
             {
                 "learning_rate": current_base_lr,
                 "beta1": getattr(cfg, "ADAM_BETA1", 0.9),
@@ -101,15 +142,23 @@ def main():
             }
         )
     else:
-        raise ValueError(f"Unsupported optimizer type: {effective_optimizer_type}")
+        raise ValueError(f"Unsupported optimizer type in config: {cfg.OPTIMIZER_TYPE}")
 
-    print("--- Effective Configuration ---")
-    print(f"Optimizer: {effective_optimizer_type.upper()}")
-    print(f"Base Learning Rate (for all params): {current_base_lr}")
+    print("--- Effective Configuration (from cfg object after CLI overrides) ---")
+    print(f"Model Name: {cfg.MODEL_NAME.upper()}")
+    print(f"Dataset Path: {cfg.DATASET_PATH}")
+    if cfg.MODEL_NAME == "bisenet":
+        print(f"BiSeNet Context Path: {cfg.BISENET_CONTEXT_PATH}")
+    print(f"Optimizer: {cfg.OPTIMIZER_TYPE.upper()}")
+    print(f"Base Learning Rate (for {cfg.OPTIMIZER_TYPE}): {current_base_lr}")
     print(f"Weight Decay: {current_weight_decay}")
-    print(f"Training for {effective_epochs} epochs.")
+    print(f"Training for {cfg.TRAIN_EPOCHS} epochs.")
     print(f"Device: {cfg.DEVICE}")
     print(f"Batch Size (from config): {cfg.BATCH_SIZE}")
+    print(f"Checkpoint Directory: {cfg.CHECKPOINT_DIR}")
+    print(
+        f"Resume from checkpoint: {cfg.RESUME_CHECKPOINT_PATH if cfg.RESUME_CHECKPOINT_PATH else 'No'}"
+    )
     print("-----------------------------")
 
     # --- Initial Checks & Setup ---
@@ -118,9 +167,9 @@ def main():
             f"CRITICAL ERROR: 'DATASET_PATH' in 'config.py' is not set or invalid: '{cfg.DATASET_PATH}'"
         )
         return
-    if not os.path.exists(cfg.PRETRAINED_MODEL_PATH):
+    if not os.path.exists(cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH):
         print(
-            f"CRITICAL ERROR: 'PRETRAINED_MODEL_PATH' in 'config.py' does not exist: '{cfg.PRETRAINED_MODEL_PATH}'"
+            f"CRITICAL ERROR: 'PRETRAINED_MODEL_PATH' in 'config.py' does not exist: '{cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH}'"
         )
         return
 
@@ -128,7 +177,37 @@ def main():
     os.makedirs(cfg.CHECKPOINT_DIR, exist_ok=True)  # Ensure checkpoint directory exists
 
     # Initialize the Weights & Biases run.
-    init_wandb(cfg, effective_optimizer_config_log)
+    init_wandb(cfg, optimizer_log_config)
+
+    if wandb.run:
+        print("Defining W&B metrics...")
+        wandb.define_metric(
+            "train/batch_loss",
+            step_metric="global_step",
+            summary="min",
+            goal="minimize",
+        )
+        wandb.define_metric(
+            "train/learning_rate", step_metric="global_step", summary="last"
+        )
+        wandb.define_metric(
+            "train/epoch_loss",
+            step_metric="global_step",
+            summary="min",
+            goal="minimize",
+        )
+        wandb.define_metric("epoch", step_metric="global_step", summary="max")
+        wandb.define_metric(
+            "val/epoch_loss", step_metric="global_step", summary="min", goal="minimize"
+        )
+        wandb.define_metric(
+            "val/mIoU", step_metric="global_step", summary="max", goal="maximize"
+        )
+        for i in range(cfg.NUM_CLASSES):
+            wandb.define_metric(
+                f"val/iou_class_{i}", step_metric="global_step", summary="last"
+            )
+        print("W&B metrics defined.")
 
     # --- DataLoaders ---
     try:
@@ -151,18 +230,17 @@ def main():
     print(f"Val loader: {len(val_loader)} batches, {len(val_loader.dataset)} images.")
 
     # --- Model ---
-    # Create the DeepLabV2 model instance
-    model = get_model(cfg.NUM_CLASSES, cfg.PRETRAINED_MODEL_PATH, cfg.DEVICE)
+    model = get_model(num_classes=cfg.NUM_CLASSES, device=cfg.DEVICE)
 
     # --- Optimizer Initialization ---
-    if effective_optimizer_type.lower() == "sgd":
+    if cfg.OPTIMIZER_TYPE.lower() == "sgd":
         optimizer = optim.SGD(
             model.parameters(),
             lr=current_base_lr,
             momentum=cfg.SGD_MOMENTUM,
             weight_decay=current_weight_decay,
         )
-    elif effective_optimizer_type.lower() == "adam":
+    elif cfg.OPTIMIZER_TYPE.lower() == "adam":
         optimizer = optim.Adam(
             model.parameters(),
             lr=current_base_lr,
@@ -170,7 +248,7 @@ def main():
             weight_decay=current_weight_decay,
         )
     else:
-        raise ValueError(f"Unsupported optimizer: {effective_optimizer_type}")
+        raise ValueError(f"Unsupported optimizer: {cfg.OPTIMIZER_TYPE}")
 
     # Define the Cross Entropy loss function, ignoring the specified index.
     criterion = nn.CrossEntropyLoss(ignore_index=cfg.IGNORE_INDEX)
@@ -222,10 +300,10 @@ def main():
         wandb.watch(model, log="all", log_freq=cfg.PRINT_FREQ_BATCH * 5, log_graph=True)
 
     # --- Training & Validation Loop ---
-    max_iter = effective_epochs * len(train_loader) if len(train_loader) > 0 else 0
+    max_iter = cfg.TRAIN_EPOCHS * len(train_loader) if len(train_loader) > 0 else 0
 
-    for epoch in range(start_epoch, effective_epochs):  # epoch is 0-indexed
-        print(f"\n--- Epoch {epoch + 1}/{effective_epochs} ---")
+    for epoch in range(start_epoch, cfg.TRAIN_EPOCHS):  # epoch is 0-indexed
+        print(f"\n--- Epoch {epoch + 1}/{cfg.TRAIN_EPOCHS} ---")
 
         avg_train_loss, global_step = train_one_epoch(
             model=model,
@@ -237,7 +315,7 @@ def main():
             global_step_offset=global_step,
             max_iter=max_iter,
             initial_base_lr=current_base_lr,
-            effective_total_epochs=effective_epochs,
+            effective_total_epochs=cfg.TRAIN_EPOCHS,
             scaler=scaler,
         )
         if wandb.run:
@@ -250,7 +328,7 @@ def main():
         current_epoch_miou = 0.0  # mIoU specifically for this epoch's validation
         if (epoch + 1) % cfg.VALIDATE_FREQ_EPOCH == 0 or (
             epoch + 1
-        ) == effective_epochs:
+        ) == cfg.TRAIN_EPOCHS:
             current_epoch_miou, avg_val_loss = validate_and_log(
                 model=model,
                 val_loader=val_loader,
@@ -258,7 +336,7 @@ def main():
                 device=cfg.DEVICE,
                 epoch=epoch,
                 global_step=global_step,
-                effective_total_epochs=effective_epochs,
+                effective_total_epochs=cfg.TRAIN_EPOCHS,
                 config_module_ref=cfg,
             )
 
@@ -289,7 +367,7 @@ def main():
         if (
             cfg.SAVE_CHECKPOINT_FREQ_EPOCH > 0
             and (epoch + 1) % cfg.SAVE_CHECKPOINT_FREQ_EPOCH == 0
-            and (epoch + 1) < effective_epochs
+            and (epoch + 1) < cfg.TRAIN_EPOCHS
         ):
             periodic_checkpoint_path = os.path.join(
                 cfg.CHECKPOINT_DIR, cfg.CHECKPOINT_FILENAME
@@ -324,8 +402,18 @@ def main():
         cfg.LATENCY_ITERATIONS,
         cfg.WARMUP_ITERATIONS,
     )
+    table_title, wandb_prefix = (
+        ("--- Table 1: Classic Cityscapes (DeepLabV2 - Step 2a) ---", "table1")
+        if cfg.MODEL_NAME == "deeplabv2"
+        else ("--- Table 2: Real-time Cityscapes (BiSeNet - Step 2b) ---", "table2")
+        if cfg.MODEL_NAME == "bisenet"
+        else (
+            f"--- Results for {cfg.MODEL_NAME.upper()} ---",
+            cfg.MODEL_NAME.lower().replace(" ", "_"),
+        )
+    )
 
-    print("\n--- Table 1: Classic Cityscapes (DeepLabV2 - Step 2a) ---")
+    print(f"\n{table_title}")
     print("| Metric                      | Value                               |")
     print("|-----------------------------|-------------------------------------|")
     print(
@@ -342,20 +430,24 @@ def main():
     )
 
     if wandb.run:
-        wandb.summary["table1_best_val_mIoU_percent"] = best_miou * 100
-        wandb.summary["table1_latency_ms_mean"] = perf_metrics.get(
+        wandb.summary[f"{wandb_prefix}_best_val_mIoU_percent"] = best_miou * 100
+        wandb.summary[f"{wandb_prefix}_latency_ms_mean"] = perf_metrics.get(
             "mean_latency_ms", -1.0
         )
-        wandb.summary["table1_flops_g"] = perf_metrics.get("flops_g", -1.0)
-        wandb.summary["table1_params_m"] = perf_metrics.get("params_m", -1.0)
+        wandb.summary[f"{wandb_prefix}_flops_g"] = perf_metrics.get("flops_g", -1.0)
+        wandb.summary[f"{wandb_prefix}_params_m"] = perf_metrics.get("params_m", -1.0)
 
+        flop_table_str = perf_metrics.get("flop_table", "FLOPs table not calculated.")
         print("\nFull FLOPs Table (from fvcore calculation):")
-        print(
-            perf_metrics.get(
-                "flop_table", "FLOPs table not calculated or error during calculation."
+        print(flop_table_str)
+        if isinstance(flop_table_str, str) and "Error" not in flop_table_str:
+            wandb.log(
+                {
+                    "performance/flop_analysis_table": wandb.Html(
+                        f"<pre>{flop_table_str}</pre>"
+                    )
+                }
             )
-        )
-
         wandb.finish()
     print("Run completed.")
 
