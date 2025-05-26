@@ -181,36 +181,6 @@ def main():
     # Initialize the Weights & Biases run.
     init_wandb(cfg, optimizer_log_config)
 
-    if wandb.run:
-        print("Defining W&B metrics...")
-        wandb.define_metric(
-            "train/batch_loss",
-            step_metric="global_step",
-            summary="min",
-            goal="minimize",
-        )
-        wandb.define_metric(
-            "train/learning_rate", step_metric="global_step", summary="last"
-        )
-        wandb.define_metric(
-            "train/epoch_loss",
-            step_metric="global_step",
-            summary="min",
-            goal="minimize",
-        )
-        wandb.define_metric("epoch", step_metric="global_step", summary="max")
-        wandb.define_metric(
-            "val/epoch_loss", step_metric="global_step", summary="min", goal="minimize"
-        )
-        wandb.define_metric(
-            "val/mIoU", step_metric="global_step", summary="max", goal="maximize"
-        )
-        for i in range(cfg.NUM_CLASSES):
-            wandb.define_metric(
-                f"val/iou_class_{i}", step_metric="global_step", summary="last"
-            )
-        print("W&B metrics defined.")
-
     # --- DataLoaders ---
     try:
         train_loader, val_loader = get_loaders(cfg)
