@@ -15,7 +15,6 @@ DATASET_PATH = f"{ROOT_DIR}/data/Cityscapes"
 # Example for Colab after gdown to /content/datasets/: '/content/datasets/cityscapes'
 
 # --- Model Selection ---
-# Choose 'deeplabv2' for Step 2a, 'bisenet' for Step 2b onwards
 MODEL_NAME = "bisenet"  # Options: "deeplabv2", "bisenet"
 
 # --- DeepLabV2 Specific ---

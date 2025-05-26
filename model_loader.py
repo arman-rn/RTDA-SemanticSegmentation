@@ -2,18 +2,17 @@
 Handles the instantiation and loading of segmentation models (DeepLabV2, BiSeNet).
 """
 
-import torch
+from typing import Any
+
 from torch import nn
 
-import config as cfg
 from models.bisenet.build_bisenet import BiSeNet
 from models.deeplabv2.deeplabv2 import get_deeplab_v2
 
+ConfigModule = Any
 
-def get_model(
-    num_classes: int,
-    device: torch.device,
-) -> nn.Module:
+
+def get_model(config_obj: ConfigModule) -> nn.Module:
     """
     Loads and initializes the specified segmentation model.
 
@@ -24,9 +23,8 @@ def get_model(
       loading pretrained weights for its backbone (e.g., ResNet18 from torchvision).
 
     Args:
-        num_classes: The number of semantic classes for the output layer.
-        device: The PyTorch device (e.g., torch.device('cuda') or
-            torch.device('cpu')) to which the model should be moved.
+        config_obj: The configuration object (e.g., the imported cfg module)
+                    containing all settings like MODEL_NAME, NUM_CLASSES, DEVICE, paths, etc.
 
     Returns:
         An initialized segmentation model (subclass of torch.nn.Module)
@@ -36,10 +34,13 @@ def get_model(
         ValueError: If an unsupported `MODEL_NAME` is specified in the config.
     """
 
-    if cfg.MODEL_NAME == "deeplabv2":
+    num_classes = config_obj.NUM_CLASSES
+    device = config_obj.DEVICE
+
+    if config_obj.MODEL_NAME == "deeplabv2":
         print(f"Loading DeepLabV2 model with {num_classes} classes.")
         print(
-            f"Using DeepLabV2 pretrained backbone from: {cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH}"
+            f"Using DeepLabV2 pretrained backbone from: {config_obj.DEEPLABV2_PRETRAINED_BACKBONE_PATH}"
         )
 
         # Creates the DeepLabV2 model instance (which is ResNetMulti)
@@ -47,32 +48,22 @@ def get_model(
         model = get_deeplab_v2(
             num_classes=num_classes,
             pretrain=True,  # Instructs get_deeplab_v2 to load ImageNet weights
-            pretrain_model_path=cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH,
+            pretrain_model_path=config_obj.DEEPLABV2_PRETRAINED_BACKBONE_PATH,
         )
-    elif cfg.MODEL_NAME == "bisenet":
+    elif config_obj.MODEL_NAME == "bisenet":
         print(f"Loading BiSeNet model with {num_classes} classes.")
-        print(f"Using BiSeNet context path: {cfg.BISENET_CONTEXT_PATH}")
+        print(f"Using BiSeNet context path: {config_obj.BISENET_CONTEXT_PATH}")
         # BiSeNet's `build_contextpath` handles loading pretrained ResNet18/101 from torchvision
         model = BiSeNet(
             num_classes=num_classes,
-            context_path=cfg.BISENET_CONTEXT_PATH,  # e.g., 'resnet18'
+            context_path=config_obj.BISENET_CONTEXT_PATH,  # e.g., 'resnet18'
         )
         # BiSeNet's own init_weight() is called within its constructor for non-backbone parts.
     else:
         raise ValueError(
-            f"Unsupported model_type: '{cfg.MODEL_NAME}'. Choose 'deeplabv2' or 'bisenet'."
+            f"Unsupported MODEL_NAME: '{config_obj.MODEL_NAME}'. Choose 'deeplabv2' or 'bisenet'."
         )
 
     model.to(device)
-    print(f"Model '{cfg.MODEL_NAME}' moved to device: {device}")
+    print(f"Model '{config_obj.MODEL_NAME}' moved to device: {device}")
     return model
-
-
-if __name__ == "__main__":
-    # This block is for quick testing of the model loader.
-    print(f"Current MODEL_NAME in config: {cfg.MODEL_NAME}")
-    try:
-        loaded_model = get_model(num_classes=cfg.NUM_CLASSES, device=cfg.DEVICE)
-        print(f"Successfully loaded model: {cfg.MODEL_NAME} using get_model.")
-    except Exception as e:
-        print(f"Error during model_loader.py __main__ test: {e}")

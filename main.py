@@ -167,11 +167,13 @@ def main():
             f"CRITICAL ERROR: 'DATASET_PATH' in 'config.py' is not set or invalid: '{cfg.DATASET_PATH}'"
         )
         return
-    if not os.path.exists(cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH):
-        print(
-            f"CRITICAL ERROR: 'PRETRAINED_MODEL_PATH' in 'config.py' does not exist: '{cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH}'"
-        )
-        return
+
+    if cfg.MODEL_NAME == "deeplabv2":
+        if not os.path.exists(cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH):
+            print(
+                f"CRITICAL ERROR: 'DEEPLABV2_PRETRAINED_BACKBONE_PATH' in 'config.py' does not exist: '{cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH}'"
+            )
+            return
 
     # Create the directory to save models if it doesn't exist.
     os.makedirs(cfg.CHECKPOINT_DIR, exist_ok=True)  # Ensure checkpoint directory exists
@@ -217,20 +219,20 @@ def main():
         if wandb.run:
             wandb.finish(exit_code=1)
         return
+
     if not train_loader or not len(train_loader.dataset):  # Check if dataset is empty
-        print(
-            "CRITICAL ERROR: Training dataset is empty or DataLoader failed. Check dataset path and 'datasets/cityscapes.py'."
-        )
+        print("CRITICAL ERROR: Training dataset is empty or DataLoader failed.")
         if wandb.run:
             wandb.finish(exit_code=1)
         return
+
     print(
         f"Train loader: {len(train_loader)} batches, {len(train_loader.dataset)} images."
     )
     print(f"Val loader: {len(val_loader)} batches, {len(val_loader.dataset)} images.")
 
     # --- Model ---
-    model = get_model(num_classes=cfg.NUM_CLASSES, device=cfg.DEVICE)
+    model = get_model(config_obj=cfg)
 
     # --- Optimizer Initialization ---
     if cfg.OPTIMIZER_TYPE.lower() == "sgd":

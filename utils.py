@@ -138,10 +138,17 @@ def init_wandb(
             "lr_scheduler_power": cfg_module.LR_SCHEDULER_POWER,
             "device": str(cfg_module.DEVICE),
             "dataset_path": cfg_module.DATASET_PATH,
-            "pretrained_model_path": cfg_module.PRETRAINED_MODEL_PATH,
             "norm_mean": cfg_module.NORM_MEAN,
             "norm_std": cfg_module.NORM_STD,
         }
+
+        if hasattr(cfg_module, "DEEPLABV2_PRETRAINED_BACKBONE_PATH"):
+            base_config_dict["deeplabv2_pretrained_path"] = (
+                cfg_module.DEEPLABV2_PRETRAINED_BACKBONE_PATH
+            )
+        if hasattr(cfg_module, "BISENET_CONTEXT_PATH"):
+            base_config_dict["bisenet_context_path"] = cfg_module.BISENET_CONTEXT_PATH
+
         # Merge base config with effective optimizer config
         full_config: Dict[str, Any] = {**base_config_dict, **effective_optimizer_config}
 
