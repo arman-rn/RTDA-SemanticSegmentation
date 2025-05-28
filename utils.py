@@ -132,12 +132,11 @@ def init_wandb(
         base_config_dict: Dict[str, Any] = {
             "script_epochs": cfg_module.TRAIN_EPOCHS,  # Renamed to avoid conflict with wandb internal 'epochs'
             "batch_size": cfg_module.BATCH_SIZE,
-            "image_height": cfg_module.IMG_HEIGHT,
-            "image_width": cfg_module.IMG_WIDTH,
+            "train_dataset": cfg_module.TRAIN_DATASET,
+            "validation_dataset": cfg_module.VAL_DATASET,
             "num_classes": cfg_module.NUM_CLASSES,
             "lr_scheduler_power": cfg_module.LR_SCHEDULER_POWER,
             "device": str(cfg_module.DEVICE),
-            "dataset_path": cfg_module.DATASET_PATH,
             "norm_mean": cfg_module.NORM_MEAN,
             "norm_std": cfg_module.NORM_STD,
         }
@@ -148,6 +147,28 @@ def init_wandb(
             )
         if hasattr(cfg_module, "BISENET_CONTEXT_PATH"):
             base_config_dict["bisenet_context_path"] = cfg_module.BISENET_CONTEXT_PATH
+
+        base_config_dict["train_image_height"] = (
+            cfg_module.GTA5_IMG_HEIGHT
+            if cfg_module.TRAIN_DATASET == "gta5"
+            else cfg_module.CITYSCAPES_IMG_HEIGHT
+        )
+        base_config_dict["train_image_width"] = (
+            cfg_module.GTA5_IMG_WIDTH
+            if cfg_module.TRAIN_DATASET == "gta5"
+            else cfg_module.CITYSCAPES_IMG_WIDTH
+        )
+
+        base_config_dict["validation_image_height"] = (
+            cfg_module.GTA5_IMG_HEIGHT
+            if cfg_module.VAL_DATASET == "gta5"
+            else cfg_module.CITYSCAPES_IMG_HEIGHT
+        )
+        base_config_dict["validation_image_width"] = (
+            cfg_module.GTA5_IMG_WIDTH
+            if cfg_module.VAL_DATASET == "gta5"
+            else cfg_module.CITYSCAPES_IMG_WIDTH
+        )
 
         # Merge base config with effective optimizer config
         full_config: Dict[str, Any] = {**base_config_dict, **effective_optimizer_config}

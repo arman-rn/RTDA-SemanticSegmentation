@@ -22,6 +22,11 @@ GTA5_DATASET_PATH = f"{ROOT_DIR}/data/GTA5"
 # --- Model Selection ---
 MODEL_NAME = "bisenet"  # Options: "deeplabv2", "bisenet"
 
+# --- Dataset Selection ---
+TRAIN_DATASET = "gta5"  # Options: "gta5", "cityscapes"
+# Validation dataset is always Cityscapes for this project.
+VAL_DATASET = "cityscapes"  # Options: "gta5", "cityscapes"
+
 # --- DeepLabV2 Specific ---
 # Path to the ResNet-101 weights pretrained on ImageNet, used to initialize the backbone of DeepLabV2.
 DEEPLABV2_PRETRAINED_BACKBONE_PATH = f"{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_imagenet.pth"  # Path to the ResNet-101 weights pretrained on ImageNet, used to initialize the backbone of your DeepLabV2 model. The project specifies using a backbone pre-trained on ImageNet.

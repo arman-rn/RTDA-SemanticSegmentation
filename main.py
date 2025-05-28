@@ -87,14 +87,14 @@ def main():
     parser.add_argument(
         "--train_dataset",
         type=str,
-        default="cityscapes",
+        default=None,
         choices=["cityscapes", "gta5"],
         help="Dataset for training. Default: cityscapes.",
     )
     parser.add_argument(
         "--val_dataset",
         type=str,
-        default="cityscapes",
+        default=None,
         choices=["cityscapes", "gta5"],
         help="Dataset for validation. Default: cityscapes.",
     )
@@ -113,6 +113,10 @@ def main():
 
     if args.model_name is not None:
         cfg.MODEL_NAME = args.model_name
+    if args.train_dataset is not None:
+        cfg.TRAIN_DATASET = args.train_dataset
+    if args.val_dataset is not None:
+        cfg.VAL_DATASET = args.val_dataset
     if args.cityscapes_dataset_path:
         cfg.CITYSCAPES_DATASET_PATH = args.cityscapes_dataset_path
     if args.gta5_dataset_path:
@@ -169,29 +173,29 @@ def main():
     print(f"Model Name: {cfg.MODEL_NAME.upper()}")
     train_res_h = (
         cfg.GTA5_IMG_HEIGHT
-        if args.train_dataset == "gta5"
+        if cfg.TRAIN_DATASET == "gta5"
         else cfg.CITYSCAPES_IMG_HEIGHT
     )
     train_res_w = (
-        cfg.GTA5_IMG_WIDTH if args.train_dataset == "gta5" else cfg.CITYSCAPES_IMG_WIDTH
+        cfg.GTA5_IMG_WIDTH if cfg.TRAIN_DATASET == "gta5" else cfg.CITYSCAPES_IMG_WIDTH
     )
     val_res_h = (
         cfg.CITYSCAPES_IMG_HEIGHT
-        if args.val_dataset == "cityscapes"
+        if cfg.VAL_DATASET == "cityscapes"
         else cfg.GTA5_IMG_HEIGHT
     )
     val_res_w = (
         cfg.CITYSCAPES_IMG_WIDTH
-        if args.val_dataset == "cityscapes"
+        if cfg.VAL_DATASET == "cityscapes"
         else cfg.GTA5_IMG_WIDTH
     )
-    print(f"Train Dataset: {args.train_dataset.upper()} ({train_res_w}x{train_res_h})")
+    print(f"Train Dataset: {cfg.TRAIN_DATASET.upper()} ({train_res_w}x{train_res_h})")
     print(
-        f"  - Path: {cfg.GTA5_DATASET_PATH if args.train_dataset == 'gta5' else cfg.CITYSCAPES_DATASET_PATH}"
+        f"  - Path: {cfg.GTA5_DATASET_PATH if cfg.TRAIN_DATASET == 'gta5' else cfg.CITYSCAPES_DATASET_PATH}"
     )
-    print(f"Validation Dataset: {args.val_dataset.upper()} ({val_res_w}x{val_res_h})")
+    print(f"Validation Dataset: {cfg.VAL_DATASET.upper()} ({val_res_w}x{val_res_h})")
     print(
-        f"  - Path: {cfg.GTA5_DATASET_PATH if args.val_dataset == 'gta5' else cfg.CITYSCAPES_DATASET_PATH}"
+        f"  - Path: {cfg.GTA5_DATASET_PATH if cfg.VAL_DATASET == 'gta5' else cfg.CITYSCAPES_DATASET_PATH}"
     )
     if cfg.MODEL_NAME == "bisenet":
         print(f"BiSeNet Context Path: {cfg.BISENET_CONTEXT_PATH}")
@@ -210,12 +214,12 @@ def main():
     # --- Initial Checks & Setup ---
     train_path = (
         cfg.GTA5_DATASET_PATH
-        if args.train_dataset == "gta5"
+        if cfg.TRAIN_DATASET == "gta5"
         else cfg.CITYSCAPES_DATASET_PATH
     )
     val_path = (
         cfg.CITYSCAPES_DATASET_PATH
-        if args.val_dataset == "cityscapes"
+        if cfg.VAL_DATASET == "cityscapes"
         else cfg.GTA5_DATASET_PATH
     )
     if not os.path.exists(train_path):
@@ -242,8 +246,8 @@ def main():
     try:
         train_loader, val_loader = get_loaders(
             cfg,
-            train_dataset_name=args.train_dataset,
-            val_dataset_name=args.val_dataset,
+            train_dataset_name=cfg.TRAIN_DATASET,
+            val_dataset_name=cfg.VAL_DATASET,
         )
     except Exception as e:
         print(f"CRITICAL ERROR: Failed to initialize DataLoaders: {e}")
@@ -493,10 +497,10 @@ def main():
         cfg.WARMUP_ITERATIONS,
     )
 
-    wandb_run_name_prefix = f"{cfg.MODEL_NAME.lower()}_train_{args.train_dataset.lower()}_val_{args.val_dataset.lower()}"
+    wandb_run_name_prefix = f"{cfg.MODEL_NAME.lower()}_train_{cfg.TRAIN_DATASET.lower()}_val_{cfg.VAL_DATASET.lower()}"
     print(f"\n--- Final Results for Run: {wandb_run_name_prefix} ---")
     print(
-        f"| Best Overall mIoU on {args.val_dataset.upper()} (%) | {best_miou_for_summary_report * 100:.2f} |"
+        f"| Best Overall mIoU on {cfg.VAL_DATASET.upper()} (%) | {best_miou_for_summary_report * 100:.2f} |"
     )
     print(
         f"| Latency (ms) @ {cfg.CITYSCAPES_IMG_WIDTH}x{cfg.CITYSCAPES_IMG_HEIGHT} | {perf_metrics.get('mean_latency_ms', -1.0):.2f} +/- {perf_metrics.get('std_latency_ms', -1.0):.2f} |"
