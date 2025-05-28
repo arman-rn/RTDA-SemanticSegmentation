@@ -13,11 +13,12 @@ from typing import Any, Optional, Tuple
 
 import numpy as np
 import torch
+import wandb  # For logging to Weights & Biases
 from torch import nn  # For type hints
 from torch.utils.data import DataLoader
 from tqdm import tqdm  # For progress bar
 
-import wandb  # For logging to Weights & Biases
+from data_loader import CITYSCAPES_ID_TO_NAME_MAP
 from utils import fast_hist, log_segmentation_to_wandb, per_class_iou
 
 # Type alias for the config module for clarity
@@ -34,7 +35,7 @@ def validate_and_log(
     global_step: int,
     effective_total_epochs: int,  # For accurate tqdm display
     config_module_ref: ConfigModule,  # Pass the config module for NORM_MEAN/STD
-) -> Tuple[float, float]:
+) -> Tuple[float, float, np.ndarray]:  # Returns: mIoU, avg_loss, all_class_ious_array
     """
     Evaluates the model on the validation dataset and logs metrics.
 
@@ -130,24 +131,26 @@ def validate_and_log(
     )
 
     # Calculate Mean IoU
-    ious = per_class_iou(hist)
-    # Calculate mean IoU across all classes
-    mean_iou = float(np.mean(ious))
+    all_class_ious = per_class_iou(hist)  # Array of IoUs for each class
+    mean_iou_all_classes = float(np.nanmean(all_class_ious))
+
+    # Console print after each validation epoch (general summary)
+    print(
+        f"\nValidation Epoch {epoch + 1}: Avg Loss: {avg_val_loss:.4f}, Overall Mean IoU: {mean_iou_all_classes:.4f}"
+    )
+    # Per-class IoUs are no longer printed here, will be handled in main.py for final summary
 
     # W&B Logging (Epoch-level Validation)
     # Logs validation loss, mIoU, and per-class IoUs to W&B, using global_step to align with training.
     if wandb.run:
-        wandb_log_dict = {
+        log_payload = {
             "val/epoch_loss": avg_val_loss,
-            "val/mIoU": mean_iou,
+            "val/mIoU": mean_iou_all_classes,
             "epoch": epoch + 1,  # Log 1-indexed epoch
         }
-        for i, iou_val in enumerate(ious):
-            wandb_log_dict[f"val/iou_class_{i}"] = float(iou_val)
-        wandb.log(wandb_log_dict, step=global_step)  # Log against global training step
+        for i, iou_val in enumerate(all_class_ious):
+            class_name = CITYSCAPES_ID_TO_NAME_MAP.get(i, f"class_{i}")
+            log_payload[f"val_iou_per_class/iou_{class_name}"] = float(iou_val)
+        wandb.log(log_payload, step=global_step)  # Log against global training step
 
-    print(
-        f"\nValidation Epoch {epoch + 1}: Avg Loss: {avg_val_loss:.4f}, Mean IoU: {mean_iou:.4f}"
-    )
-
-    return mean_iou, avg_val_loss
+    return mean_iou_all_classes, avg_val_loss, all_class_ious

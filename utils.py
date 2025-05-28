@@ -441,5 +441,6 @@ def load_checkpoint(
         ),  # Return -1 if not found, so start_epoch becomes 0
         "global_step": checkpoint.get("global_step", 0),
         "best_miou": checkpoint.get("best_miou", 0.0),
+        "best_model_per_class_ious": checkpoint.get("best_model_per_class_ious"),
         # Include any other saved metadata you need
     }

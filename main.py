@@ -17,12 +17,13 @@ import importlib  # For reloading config in notebooks
 import os
 from typing import Any, Optional
 
+import numpy as np
 import torch
 import wandb  # For Weights & Biases integration
 from torch import GradScaler, nn, optim  # For type hints
 
 import config as cfg
-from data_loader import get_loaders
+from data_loader import CITYSCAPES_ID_TO_NAME_MAP, get_loaders
 from model_loader import get_model
 from train import train_one_epoch
 from utils import (
@@ -72,10 +73,30 @@ def main():
         help="Path to resume training from. Overrides config.",
     )
     parser.add_argument(
-        "--dataset_path",
+        "--cityscapes_dataset_path",
         type=str,
         default=None,
-        help="Path to dataset. Overrides config.",
+        help="Path to Cityscapes dataset. Overrides config.CITYSCAPES_DATASET_PATH.",
+    )
+    parser.add_argument(
+        "--gta5_dataset_path",
+        type=str,
+        default=None,
+        help="Path to GTA5 dataset. Overrides config.GTA5_DATASET_PATH.",
+    )
+    parser.add_argument(
+        "--train_dataset",
+        type=str,
+        default="cityscapes",
+        choices=["cityscapes", "gta5"],
+        help="Dataset for training. Default: cityscapes.",
+    )
+    parser.add_argument(
+        "--val_dataset",
+        type=str,
+        default="cityscapes",
+        choices=["cityscapes", "gta5"],
+        help="Dataset for validation. Default: cityscapes.",
     )
     parser.add_argument(
         "--bisenet_context_path",
@@ -92,11 +113,11 @@ def main():
 
     if args.model_name is not None:
         cfg.MODEL_NAME = args.model_name
-    if args.dataset_path is not None:
-        cfg.DATASET_PATH = args.dataset_path
-    if (
-        args.bisenet_context_path is not None and cfg.MODEL_NAME == "bisenet"
-    ):  # Only apply if BiSeNet is the model
+    if args.cityscapes_dataset_path:
+        cfg.CITYSCAPES_DATASET_PATH = args.cityscapes_dataset_path
+    if args.gta5_dataset_path:
+        cfg.GTA5_DATASET_PATH = args.gta5_dataset_path
+    if args.bisenet_context_path is not None and cfg.MODEL_NAME == "bisenet":
         cfg.BISENET_CONTEXT_PATH = args.bisenet_context_path
     if args.optimizer is not None:
         cfg.OPTIMIZER_TYPE = args.optimizer
@@ -146,7 +167,32 @@ def main():
 
     print("--- Effective Configuration (from cfg object after CLI overrides) ---")
     print(f"Model Name: {cfg.MODEL_NAME.upper()}")
-    print(f"Dataset Path: {cfg.DATASET_PATH}")
+    train_res_h = (
+        cfg.GTA5_IMG_HEIGHT
+        if args.train_dataset == "gta5"
+        else cfg.CITYSCAPES_IMG_HEIGHT
+    )
+    train_res_w = (
+        cfg.GTA5_IMG_WIDTH if args.train_dataset == "gta5" else cfg.CITYSCAPES_IMG_WIDTH
+    )
+    val_res_h = (
+        cfg.CITYSCAPES_IMG_HEIGHT
+        if args.val_dataset == "cityscapes"
+        else cfg.GTA5_IMG_HEIGHT
+    )
+    val_res_w = (
+        cfg.CITYSCAPES_IMG_WIDTH
+        if args.val_dataset == "cityscapes"
+        else cfg.GTA5_IMG_WIDTH
+    )
+    print(f"Train Dataset: {args.train_dataset.upper()} ({train_res_w}x{train_res_h})")
+    print(
+        f"  - Path: {cfg.GTA5_DATASET_PATH if args.train_dataset == 'gta5' else cfg.CITYSCAPES_DATASET_PATH}"
+    )
+    print(f"Validation Dataset: {args.val_dataset.upper()} ({val_res_w}x{val_res_h})")
+    print(
+        f"  - Path: {cfg.GTA5_DATASET_PATH if args.val_dataset == 'gta5' else cfg.CITYSCAPES_DATASET_PATH}"
+    )
     if cfg.MODEL_NAME == "bisenet":
         print(f"BiSeNet Context Path: {cfg.BISENET_CONTEXT_PATH}")
     print(f"Optimizer: {cfg.OPTIMIZER_TYPE.upper()}")
@@ -162,18 +208,29 @@ def main():
     print("-----------------------------")
 
     # --- Initial Checks & Setup ---
-    if not os.path.exists(cfg.DATASET_PATH):
+    train_path = (
+        cfg.GTA5_DATASET_PATH
+        if args.train_dataset == "gta5"
+        else cfg.CITYSCAPES_DATASET_PATH
+    )
+    val_path = (
+        cfg.CITYSCAPES_DATASET_PATH
+        if args.val_dataset == "cityscapes"
+        else cfg.GTA5_DATASET_PATH
+    )
+    if not os.path.exists(train_path):
+        print(f"CRITICAL: Train path missing: {train_path}")
+        return
+    if not os.path.exists(val_path):
+        print(f"CRITICAL: Validation path missing: {val_path}")
+        return
+    if cfg.MODEL_NAME == "deeplabv2" and not os.path.exists(
+        cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH
+    ):
         print(
-            f"CRITICAL ERROR: 'DATASET_PATH' in 'config.py' is not set or invalid: '{cfg.DATASET_PATH}'"
+            f"CRITICAL: DeepLabV2 backbone missing: {cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH}"
         )
         return
-
-    if cfg.MODEL_NAME == "deeplabv2":
-        if not os.path.exists(cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH):
-            print(
-                f"CRITICAL ERROR: 'DEEPLABV2_PRETRAINED_BACKBONE_PATH' in 'config.py' does not exist: '{cfg.DEEPLABV2_PRETRAINED_BACKBONE_PATH}'"
-            )
-            return
 
     # Create the directory to save models if it doesn't exist.
     os.makedirs(cfg.CHECKPOINT_DIR, exist_ok=True)  # Ensure checkpoint directory exists
@@ -183,7 +240,11 @@ def main():
 
     # --- DataLoaders ---
     try:
-        train_loader, val_loader = get_loaders(cfg)
+        train_loader, val_loader = get_loaders(
+            cfg,
+            train_dataset_name=args.train_dataset,
+            val_dataset_name=args.val_dataset,
+        )
     except Exception as e:
         print(f"CRITICAL ERROR: Failed to initialize DataLoaders: {e}")
         if wandb.run:
@@ -298,10 +359,14 @@ def main():
 
         # --- Validation ---
         current_epoch_miou = 0.0  # mIoU specifically for this epoch's validation
+        current_per_class_ious = np.zeros(
+            cfg.NUM_CLASSES
+        )  # Initialize for current epoch
+
         if (epoch + 1) % cfg.VALIDATE_FREQ_EPOCH == 0 or (
             epoch + 1
         ) == cfg.TRAIN_EPOCHS:
-            current_epoch_miou, avg_val_loss = validate_and_log(
+            current_epoch_miou, avg_val_loss, current_per_class_ious = validate_and_log(
                 model=model,
                 val_loader=val_loader,
                 criterion=criterion,
@@ -327,19 +392,26 @@ def main():
             "optimizer_state_dict": optimizer.state_dict(),
             "best_miou": best_miou,  # Persist the overall best mIoU found so far
         }
+
         if scaler:
             checkpoint_state["scaler_state_dict"] = scaler.state_dict()
 
         if is_best:
+            # *** ADD per-class IoUs to the state for the BEST checkpoint ***
+            checkpoint_state["best_model_per_class_ious"] = current_per_class_ious
             best_checkpoint_path = os.path.join(
                 cfg.CHECKPOINT_DIR, cfg.BEST_CHECKPOINT_FILENAME
             )
             save_checkpoint(checkpoint_state, best_checkpoint_path)
+            # Remove the key if it was added, so periodic checkpoints don't get it unless they are also best.
+            if "best_model_per_class_ious" in checkpoint_state:
+                del checkpoint_state["best_model_per_class_ious"]
 
         if (
             cfg.SAVE_CHECKPOINT_FREQ_EPOCH > 0
             and (epoch + 1) % cfg.SAVE_CHECKPOINT_FREQ_EPOCH == 0
-            and (epoch + 1) < cfg.TRAIN_EPOCHS
+            and (epoch + 1)
+            < cfg.TRAIN_EPOCHS  # Avoid saving periodic on last epoch if best is already saved
         ):
             periodic_checkpoint_path = os.path.join(
                 cfg.CHECKPOINT_DIR, cfg.CHECKPOINT_FILENAME
@@ -350,76 +422,152 @@ def main():
     if wandb.run and "avg_train_loss" in locals():
         wandb.summary["final_train_epoch_loss_last_epoch"] = avg_train_loss
 
-    # --- Final Performance Metrics ---
+    # --- Final Metrics and Per-Class IoU for Best Model ---
+    final_per_class_ious_to_report = np.zeros(cfg.NUM_CLASSES)
+    best_miou_for_summary_report = 0.0
+
     final_eval_model_path = os.path.join(
         cfg.CHECKPOINT_DIR, cfg.BEST_CHECKPOINT_FILENAME
     )
+
     if os.path.exists(final_eval_model_path):
         print(
-            f"Loading best model from checkpoint {final_eval_model_path} for final metrics calculation..."
-        )
-        # Only model weights are strictly needed for eval, but load_checkpoint is fine
-        load_checkpoint(final_eval_model_path, model, device=cfg.DEVICE)
-    else:
-        print(
-            f"Best checkpoint not found at {final_eval_model_path}. Using last model state for metrics."
+            f"Loading best model from {final_eval_model_path} for final evaluation..."
         )
 
-    print("\nCalculating final performance metrics (FLOPs, Latency)...")
+        checkpoint_summary = load_checkpoint(
+            filepath=final_eval_model_path,
+            model=model,  # Model instance is updated in-place
+            device=cfg.DEVICE,
+        )
+
+        if checkpoint_summary:  # If checkpoint loaded successfully
+            best_miou_for_summary_report = checkpoint_summary.get("best_miou", 0.0)
+            loaded_per_class_ious = checkpoint_summary.get("best_model_per_class_ious")
+
+            if loaded_per_class_ious is not None:
+                final_per_class_ious_to_report = loaded_per_class_ious
+                print("Loaded per-class IoUs from the best checkpoint.")
+            else:
+                print(
+                    f"CRITICAL WARNING: 'best_model_per_class_ious' key not found in '{final_eval_model_path}'."
+                )
+                print(
+                    "Per-class IoUs will be reported as zeros. Ensure checkpoints are saved correctly."
+                )
+                # No re-validation fallback as per the new assumption.
+        else:
+            print(
+                f"CRITICAL WARNING: Failed to load checkpoint data from {final_eval_model_path} even though file exists."
+            )
+            print(
+                "Metrics and per-class IoUs might be inaccurate. Reporting based on zeros/last known best_miou."
+            )
+            best_miou_for_summary_report = (
+                best_miou  # Fallback to best_miou from training loop
+            )
+            # final_per_class_ious_to_report remains zeros
+    else:
+        print(
+            f"CRITICAL WARNING: Best checkpoint file '{cfg.BEST_CHECKPOINT_FILENAME}' not found at '{final_eval_model_path}'."
+        )
+        print(
+            "Cannot load best model for final per-class IoU report. Reporting based on zeros/last known best_miou."
+        )
+        best_miou_for_summary_report = (
+            best_miou  # Fallback to best_miou from training loop
+        )
+        # final_per_class_ious_to_report remains zeros
+
+    print(
+        "\nCalculating performance metrics (FLOPs, Latency on current model state)..."
+    )
+
+    # The 'model' instance is the loaded best model if successful, otherwise it's the state from end of training.
     perf_metrics = calculate_performance_metrics(
         model,
         cfg.DEVICE,
-        cfg.IMG_HEIGHT,
-        cfg.IMG_WIDTH,
+        cfg.CITYSCAPES_IMG_HEIGHT,
+        cfg.CITYSCAPES_IMG_WIDTH,
         cfg.LATENCY_ITERATIONS,
         cfg.WARMUP_ITERATIONS,
     )
-    table_title, wandb_prefix = (
-        ("--- Table 1: Classic Cityscapes (DeepLabV2 - Step 2a) ---", "table1")
-        if cfg.MODEL_NAME == "deeplabv2"
-        else ("--- Table 2: Real-time Cityscapes (BiSeNet - Step 2b) ---", "table2")
-        if cfg.MODEL_NAME == "bisenet"
-        else (
-            f"--- Results for {cfg.MODEL_NAME.upper()} ---",
-            cfg.MODEL_NAME.lower().replace(" ", "_"),
-        )
+
+    wandb_run_name_prefix = f"{cfg.MODEL_NAME.lower()}_train_{args.train_dataset.lower()}_val_{args.val_dataset.lower()}"
+    print(f"\n--- Final Results for Run: {wandb_run_name_prefix} ---")
+    print(
+        f"| Best Overall mIoU on {args.val_dataset.upper()} (%) | {best_miou_for_summary_report * 100:.2f} |"
+    )
+    print(
+        f"| Latency (ms) @ {cfg.CITYSCAPES_IMG_WIDTH}x{cfg.CITYSCAPES_IMG_HEIGHT} | {perf_metrics.get('mean_latency_ms', -1.0):.2f} +/- {perf_metrics.get('std_latency_ms', -1.0):.2f} |"
+    )
+    print(
+        f"| FLOPs (G) @ {cfg.CITYSCAPES_IMG_WIDTH}x{cfg.CITYSCAPES_IMG_HEIGHT}    | {perf_metrics.get('flops_g', -1.0):.2f} |"
+    )
+    print(
+        f"| Parameters (M)               | {perf_metrics.get('params_m', -1.0):.2f} |"
     )
 
-    print(f"\n{table_title}")
-    print("| Metric                      | Value                               |")
-    print("|-----------------------------|-------------------------------------|")
     print(
-        f"| Best mIoU (%)               | {best_miou * 100:.2f}                              |"
-    )
-    print(
-        f"| Latency (ms)                | {perf_metrics.get('mean_latency_ms', -1.0):.2f} +/- {perf_metrics.get('std_latency_ms', -1.0):.2f} |"
-    )
-    print(
-        f"| FLOPs (G)                   | {perf_metrics.get('flops_g', -1.0):.2f}                                |"
-    )
-    print(
-        f"| Params (M)                  | {perf_metrics.get('params_m', -1.0):.2f}                                |"
-    )
+        "\nPer-Class IoUs from Best Model Checkpoint (for Table 3):"
+    )  # Changed title slightly
+    print("| Class Name           | IoU     |")
+    print("|----------------------|---------|")
+    if (
+        final_per_class_ious_to_report is not None
+        and len(final_per_class_ious_to_report) == cfg.NUM_CLASSES
+    ):
+        for i, iou_val in enumerate(final_per_class_ious_to_report):
+            class_name = CITYSCAPES_ID_TO_NAME_MAP.get(i, f"Class_{i}")
+            print(f"| {class_name:<20} | {iou_val:.4f} |")
+    else:
+        print("| Per-class IoUs data not reliably obtained. |")
+    print("------------------------------------")
 
     if wandb.run:
-        wandb.summary[f"{wandb_prefix}_best_val_mIoU_percent"] = best_miou * 100
-        wandb.summary[f"{wandb_prefix}_latency_ms_mean"] = perf_metrics.get(
+        wandb.summary[f"{wandb_run_name_prefix}_best_overall_val_mIoU_percent"] = (
+            best_miou_for_summary_report * 100
+        )
+        wandb.summary[f"{wandb_run_name_prefix}_latency_ms_mean"] = perf_metrics.get(
             "mean_latency_ms", -1.0
         )
-        wandb.summary[f"{wandb_prefix}_flops_g"] = perf_metrics.get("flops_g", -1.0)
-        wandb.summary[f"{wandb_prefix}_params_m"] = perf_metrics.get("params_m", -1.0)
+        wandb.summary[f"{wandb_run_name_prefix}_flops_g"] = perf_metrics.get(
+            "flops_g", -1.0
+        )
+        wandb.summary[f"{wandb_run_name_prefix}_params_m"] = perf_metrics.get(
+            "params_m", -1.0
+        )
+
+        if (
+            final_per_class_ious_to_report is not None
+            and len(final_per_class_ious_to_report) == cfg.NUM_CLASSES
+        ):
+            for i, iou_val in enumerate(final_per_class_ious_to_report):
+                class_name = CITYSCAPES_ID_TO_NAME_MAP.get(i, f"class_{i}")
+                wandb.summary[f"{wandb_run_name_prefix}_final_iou_{class_name}"] = (
+                    float(iou_val)
+                )
 
         flop_table_str = perf_metrics.get("flop_table", "FLOPs table not calculated.")
-        print("\nFull FLOPs Table (from fvcore calculation):")
-        print(flop_table_str)
         if isinstance(flop_table_str, str) and "Error" not in flop_table_str:
-            wandb.log(
-                {
-                    "performance/flop_analysis_table": wandb.Html(
-                        f"<pre>{flop_table_str}</pre>"
-                    )
-                }
-            )
+            try:
+                wandb.log(
+                    {
+                        f"info/{wandb_run_name_prefix}_flop_analysis_table": wandb.Html(
+                            f"<pre>{flop_table_str}</pre>"
+                        )
+                    }
+                )
+            except Exception as e_wandb_html:
+                print(
+                    f"Warning: Could not log FLOP table as HTML to W&B: {e_wandb_html}"
+                )
+                wandb.log(
+                    {
+                        f"info/{wandb_run_name_prefix}_flop_analysis_table_text": flop_table_str
+                    }
+                )
+
         wandb.finish()
     print("Run completed.")
 

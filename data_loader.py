@@ -14,27 +14,31 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from torch.utils.data import Dataset as TorchDataset  # Alias to avoid confusion
 
-# Import the CityScapes class from your existing file
-# This assumes 'datasets.cityscapes.CityScapes' is a valid PyTorch Dataset class
 from datasets.cityscapes import CityScapes
+from datasets.gta5 import GTA5
 
 # Type alias for the config module for clarity
-ConfigModule = Any  # Could be replaced with a Protocol if config structure is strict
+ConfigModule = Any
 
 
 # --- DataLoader Getter Function ---
-def get_loaders(config_obj: ConfigModule) -> Tuple[DataLoader, DataLoader]:
+def get_loaders(
+    config_obj: ConfigModule,
+    train_dataset_name: str = "cityscapes",
+    val_dataset_name: str = "cityscapes",
+) -> Tuple[DataLoader, DataLoader]:
     """
     Creates and returns training and validation PyTorch DataLoaders.
 
-    It uses the CityScapes dataset class (imported from datasets.cityscapes)
+    It uses the dataset classes (imported from datasets.cityscapes)
     and applies transformations specified in the configuration object.
 
     Args:
         config_obj: The configuration module or object (e.g., imported `config.py`)
             containing paths, batch size, number of workers, and transformations.
+        train_dataset_name (str): Name of the dataset for training ("cityscapes" or "gta5").
+        val_dataset_name (str): Name of the dataset for validation ("cityscapes" or "gta5").
 
     Returns:
         A tuple containing the training DataLoader and the validation DataLoader.
@@ -45,32 +49,67 @@ def get_loaders(config_obj: ConfigModule) -> Tuple[DataLoader, DataLoader]:
             after initialization, indicating a likely issue with `DATASET_PATH`
             or the dataset class implementation.
     """
-    print(f"Loading training data from: {config_obj.DATASET_PATH}")
-    print("Using CityScapes class from: datasets.cityscapes.py")
-    train_dataset: TorchDataset = CityScapes(
-        cityscapes_path=config_obj.DATASET_PATH,
-        split="train",
-        transforms=config_obj.TRAIN_TRANSFORMS,
-    )
-    if not len(train_dataset):  # Check if the dataset loaded any samples
-        raise ValueError(
-            f"CRITICAL: Training dataset is empty. Check DATASET_PATH in config ('{config_obj.DATASET_PATH}') "
-            "and the implementation of 'datasets/cityscapes.py'."
-        )
-    print(f"Found {len(train_dataset)} training images.")
 
-    print(f"Loading validation data from: {config_obj.DATASET_PATH}")
-    val_dataset: TorchDataset = CityScapes(
-        cityscapes_path=config_obj.DATASET_PATH,
-        split="val",
-        transforms=config_obj.VAL_TRANSFORMS,
-    )
-    if not len(val_dataset):  # Check if the dataset loaded any samples
-        raise ValueError(
-            f"CRITICAL: Validation dataset is empty. Check DATASET_PATH in config ('{config_obj.DATASET_PATH}') "
-            "and the implementation of 'datasets/cityscapes.py'."
+    # --- Training Dataset ---
+    if train_dataset_name.lower() == "cityscapes":
+        print(
+            f"Loading Cityscapes training data from: {config_obj.CITYSCAPES_DATASET_PATH}"
         )
-    print(f"Found {len(val_dataset)} validation images.")
+        print(
+            f"Using Cityscapes training transforms (resize to {config_obj.CITYSCAPES_IMG_WIDTH}x{config_obj.CITYSCAPES_IMG_HEIGHT})."
+        )
+        train_dataset = CityScapes(
+            cityscapes_path=config_obj.CITYSCAPES_DATASET_PATH,
+            split="train",
+            transforms=config_obj.CITYSCAPES_TRAIN_TRANSFORMS,
+        )
+    elif train_dataset_name.lower() == "gta5":
+        print(f"Loading GTA5 training data from: {config_obj.GTA5_DATASET_PATH}")
+        print(
+            f"Using GTA5 training transforms (resize to {config_obj.GTA5_IMG_WIDTH}x{config_obj.GTA5_IMG_HEIGHT})."
+        )
+        train_dataset = GTA5(
+            gta5_path=config_obj.GTA5_DATASET_PATH,
+            transforms=config_obj.GTA5_TRAIN_TRANSFORMS,
+        )
+    else:
+        raise ValueError(f"Unsupported training dataset: {train_dataset_name}")
+
+    if not len(train_dataset):
+        raise ValueError(f"CRITICAL: Training dataset '{train_dataset_name}' is empty.")
+
+    print(f"Found {len(train_dataset)} training images for {train_dataset_name}.")
+
+    # --- Validation Dataset ---
+    if val_dataset_name.lower() == "cityscapes":
+        print(
+            f"Loading Cityscapes validation data from: {config_obj.CITYSCAPES_DATASET_PATH}"
+        )
+        print(
+            f"Using Cityscapes validation transforms (resize to {config_obj.CITYSCAPES_IMG_WIDTH}x{config_obj.CITYSCAPES_IMG_HEIGHT})."
+        )
+        val_dataset = CityScapes(
+            cityscapes_path=config_obj.CITYSCAPES_DATASET_PATH,
+            split="val",
+            transforms=config_obj.CITYSCAPES_VAL_TRANSFORMS,
+        )
+    elif val_dataset_name.lower() == "gta5":
+        # This case is not needed but supported
+        print(f"Loading GTA5 validation data from: {config_obj.GTA5_DATASET_PATH}")
+        print(
+            f"Using GTA5 validation transforms (resize to {config_obj.GTA5_IMG_WIDTH}x{config_obj.GTA5_IMG_HEIGHT})."
+        )
+        val_dataset = GTA5(
+            gta5_path=config_obj.GTA5_DATASET_PATH,
+            transforms=config_obj.GTA5_TRAIN_TRANSFORMS,  # Or a dedicated GTA5_VAL_TRANSFORMS
+        )
+    else:
+        raise ValueError(f"Unsupported validation dataset: {val_dataset_name}")
+
+    if not len(val_dataset):
+        raise ValueError(f"CRITICAL: Validation dataset '{val_dataset_name}' is empty.")
+
+    print(f"Found {len(val_dataset)} validation images for {val_dataset_name}.")
 
     train_loader = DataLoader(
         train_dataset,

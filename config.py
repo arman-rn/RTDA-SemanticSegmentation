@@ -10,9 +10,14 @@ WANDB_ENTITY = "RTDA-SemSeg"  # Your W&B username or team name, if None, it uses
 
 # --- Project Paths ---
 ROOT_DIR = "."
+
 # Local
-DATASET_PATH = f"{ROOT_DIR}/data/Cityscapes"
-# Example for Colab after gdown to /content/datasets/: '/content/datasets/cityscapes'
+CITYSCAPES_DATASET_PATH = f"{ROOT_DIR}/data/Cityscapes"
+GTA5_DATASET_PATH = f"{ROOT_DIR}/data/GTA5"
+
+# Example for Colab after gdown to /content/datasets/:
+# CITYSCAPES_DATASET_PATH = '/content/datasets/cityscapes'
+# GTA5_DATASET_PATH = '/content/datasets/gta5'
 
 # --- Model Selection ---
 MODEL_NAME = "bisenet"  # Options: "deeplabv2", "bisenet"
@@ -39,9 +44,15 @@ SAVE_CHECKPOINT_FREQ_EPOCH = 5  # Saves/overwrites checkpoint.pth every epoch
 
 # --- Model & Dataset Parameters ---
 NUM_CLASSES = 19  # The number of semantic classes the model needs to predict. Cityscapes has 19 evaluation classes.
-IMG_HEIGHT = 512  # The target resolution for training and testing images (1024x512 for Cityscapes as per Step 2a)
-IMG_WIDTH = 1024  # The target resolution for training and testing images (1024x512 for Cityscapes as per Step 2a)
-IGNORE_INDEX = 255  # A special label value (often 255 for Cityscapes) that the loss function should ignore. This is typically used for "void" or "unlabeled" regions in the ground truth masks.
+IGNORE_INDEX = 255  # A special label value that the loss function should ignore. This is typically used for "void" or "unlabeled" regions in the ground truth masks.
+
+# Cityscapes Dimensions
+CITYSCAPES_IMG_HEIGHT = 512
+CITYSCAPES_IMG_WIDTH = 1024
+
+# GTA5 Dimensions
+GTA5_IMG_HEIGHT = 720
+GTA5_IMG_WIDTH = 1280
 
 # --- DataLoader Settings ---
 # Number of worker processes for data loading.
@@ -84,24 +95,34 @@ NORM_MEAN = (0.485, 0.456, 0.406)
 NORM_STD = (0.229, 0.224, 0.225)
 
 # --- Augmentations ---
-# For Step 2a, only resizing and normalization are strictly needed.
 # Defines image preprocessing and augmentation pipelines using the albumentations library.
 #   A.Compose([...]): Chains multiple transformations.
 #   A.Resize: Resizes images to the specified IMG_HEIGHT and IMG_WIDTH.
 #   A.Normalize: Normalizes pixel values using NORM_MEAN and NORM_STD.
 #   ToTensorV2(): Converts the image (and mask) from a NumPy array to a PyTorch tensor and permutes image dimensions from (H, W, C) to (C, H, W).
 
-TRAIN_TRANSFORMS = A.Compose(
+# For training on GTA5
+GTA5_TRAIN_TRANSFORMS = A.Compose(
     [
-        A.Resize(height=IMG_HEIGHT, width=IMG_WIDTH),
+        A.Resize(height=GTA5_IMG_HEIGHT, width=GTA5_IMG_WIDTH),
         A.Normalize(mean=NORM_MEAN, std=NORM_STD),
         ToTensorV2(),
     ]
 )
 
-VAL_TRANSFORMS = A.Compose(
+# For training on Cityscapes
+CITYSCAPES_TRAIN_TRANSFORMS = A.Compose(
     [
-        A.Resize(height=IMG_HEIGHT, width=IMG_WIDTH),
+        A.Resize(height=CITYSCAPES_IMG_HEIGHT, width=CITYSCAPES_IMG_WIDTH),
+        A.Normalize(mean=NORM_MEAN, std=NORM_STD),
+        ToTensorV2(),
+    ]
+)
+
+# For validating on Cityscapes
+CITYSCAPES_VAL_TRANSFORMS = A.Compose(
+    [
+        A.Resize(height=CITYSCAPES_IMG_HEIGHT, width=CITYSCAPES_IMG_WIDTH),
         A.Normalize(mean=NORM_MEAN, std=NORM_STD),
         ToTensorV2(),
     ]
