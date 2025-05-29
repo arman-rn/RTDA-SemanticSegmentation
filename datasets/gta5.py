@@ -1,6 +1,5 @@
-from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -8,72 +7,7 @@ from albumentations import Compose
 from PIL import Image
 from torch.utils.data import Dataset
 
-
-@dataclass
-class _GTA5LabelDef:
-    """Helper dataclass to store GTA5 label properties."""
-
-    name: str  # Added name for clarity, though not strictly used in mapping here
-    ID: int  # This ID will be used as the trainId
-    color: Tuple[int, int, int]
-
-
-class GTA5LabelInfo:
-    """
-    Manages GTA5 label definitions and provides a color-to-ID map.
-    The IDs are consistent with Cityscapes `trainId` for common classes.
-    """
-
-    road = _GTA5LabelDef(name="road", ID=0, color=(128, 64, 128))
-    sidewalk = _GTA5LabelDef(name="sidewalk", ID=1, color=(244, 35, 232))
-    building = _GTA5LabelDef(name="building", ID=2, color=(70, 70, 70))
-    wall = _GTA5LabelDef(name="wall", ID=3, color=(102, 102, 156))
-    fence = _GTA5LabelDef(name="fence", ID=4, color=(190, 153, 153))
-    pole = _GTA5LabelDef(name="pole", ID=5, color=(153, 153, 153))
-    light = _GTA5LabelDef(name="traffic light", ID=6, color=(250, 170, 30))
-    sign = _GTA5LabelDef(name="traffic sign", ID=7, color=(220, 220, 0))
-    vegetation = _GTA5LabelDef(name="vegetation", ID=8, color=(107, 142, 35))
-    terrain = _GTA5LabelDef(name="terrain", ID=9, color=(152, 251, 152))
-    sky = _GTA5LabelDef(name="sky", ID=10, color=(70, 130, 180))
-    person = _GTA5LabelDef(name="person", ID=11, color=(220, 20, 60))
-    rider = _GTA5LabelDef(name="rider", ID=12, color=(255, 0, 0))
-    car = _GTA5LabelDef(name="car", ID=13, color=(0, 0, 142))
-    truck = _GTA5LabelDef(name="truck", ID=14, color=(0, 0, 70))
-    bus = _GTA5LabelDef(name="bus", ID=15, color=(0, 60, 100))
-    train = _GTA5LabelDef(name="train", ID=16, color=(0, 80, 100))
-    motorcycle = _GTA5LabelDef(name="motorcycle", ID=17, color=(0, 0, 230))
-    bicycle = _GTA5LabelDef(name="bicycle", ID=18, color=(119, 11, 32))
-    # Note: Class ID 19-254 are typically not used, 255 is ignore_index
-
-    # List of all defined labels
-    definitions: List[_GTA5LabelDef] = [
-        road,
-        sidewalk,
-        building,
-        wall,
-        fence,
-        pole,
-        light,
-        sign,
-        vegetation,
-        terrain,
-        sky,
-        person,
-        rider,
-        car,
-        truck,
-        bus,
-        train,
-        motorcycle,
-        bicycle,
-    ]
-
-    # Create a mapping from color tuples to a class ID for efficient conversion
-    color_to_id_map = {label_def.color: label_def.ID for label_def in definitions}
-
-    # The ignore index to use for pixels that don't map to any defined color
-    # This should match config.IGNORE_INDEX
-    ignore_id = 255
+from .label_definitions import GTA5LabelInfo
 
 
 class GTA5(Dataset):
@@ -83,9 +17,25 @@ class GTA5(Dataset):
     It converts the color-coded labels to class IDs compatible with Cityscapes trainIds.
     """
 
+    _COLOR_TO_ID_LUT = None
+
+    @staticmethod
+    def _initialize_lut():
+        if GTA5._COLOR_TO_ID_LUT is None:
+            print("Initializing GTA5 Color-to-ID LUT for on-the-fly conversion...")
+            # Use the imported GTA5LabelInfo
+            lut = np.full((256, 256, 256), GTA5LabelInfo.ignore_id, dtype=np.uint8)
+            for color_tuple, class_id in GTA5LabelInfo.color_to_id_map.items():
+                lut[color_tuple[0], color_tuple[1], color_tuple[2]] = class_id
+            GTA5._COLOR_TO_ID_LUT = lut
+            print("GTA5 LUT initialized.")
+        return GTA5._COLOR_TO_ID_LUT
+
     def __init__(
         self,
         gta5_path: str,
+        labels_subdir: str,
+        convert_on_the_fly: bool,
         transforms: Optional[Compose] = None,
     ):
         """
@@ -102,8 +52,16 @@ class GTA5(Dataset):
         """
 
         self.gta5_path = Path(gta5_path)
+        self.labels_subdir = labels_subdir
+        self.convert_on_the_fly = convert_on_the_fly
         self.transforms = transforms
+
         self.image_label_pairs = self._get_image_label_pairs()
+
+        if self.convert_on_the_fly:
+            self.lut = GTA5._initialize_lut()
+        else:
+            self.lut = None
 
         if not self.image_label_pairs:
             raise FileNotFoundError(
@@ -114,7 +72,7 @@ class GTA5(Dataset):
     def _get_image_label_pairs(self) -> list[Tuple[Path, Path]]:
         image_label_pairs = []
         image_root = self.gta5_path / "images"
-        label_root = self.gta5_path / "labels"
+        label_root = self.gta5_path / self.labels_subdir
 
         if not image_root.is_dir():
             raise FileNotFoundError(
@@ -142,58 +100,56 @@ class GTA5(Dataset):
         print(f"Found {len(image_label_pairs)} image-label pairs in {self.gta5_path}")
         return image_label_pairs
 
-    def _convert_rgb_to_id(self, label_rgb_np: np.ndarray) -> np.ndarray:
-        """Converts an RGB label image (H, W, 3) to a 2D class ID map (H, W)."""
+    def _convert_rgb_to_id_with_lut(self, label_rgb_np: np.ndarray) -> np.ndarray:
+        if self.lut is None:
+            raise RuntimeError("LUT not initialized for on-the-fly conversion.")
         if label_rgb_np.ndim != 3 or label_rgb_np.shape[2] != 3:
             raise ValueError(
-                f"Input label_rgb_np must be an RGB image with shape (H, W, 3), got {label_rgb_np.shape}"
+                f"Input label_rgb_np must be (H, W, 3), got {label_rgb_np.shape}"
             )
-
-        # Initialize the ID map with the ignore_id
-        id_map_np = np.full(
-            (label_rgb_np.shape[0], label_rgb_np.shape[1]),
-            GTA5LabelInfo.ignore_id,
-            dtype=np.uint8,
-        )
-
-        for color_tuple, class_id in GTA5LabelInfo.color_to_id_map.items():
-            # Create a mask for all pixels matching the current color
-            mask = np.all(
-                label_rgb_np == np.array(color_tuple, dtype=np.uint8).reshape(1, 1, 3),
-                axis=2,
-            )
-            id_map_np[mask] = class_id
-
-        return id_map_np
+        return self.lut[
+            label_rgb_np[..., 0], label_rgb_np[..., 1], label_rgb_np[..., 2]
+        ]
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
         img_path, label_path = self.image_label_pairs[index]
-
         try:
             img_pil = Image.open(img_path).convert("RGB")
-            label_pil = Image.open(label_path).convert(
-                "RGB"
-            )  # Ensure label is also loaded as RGB
-        except FileNotFoundError as e:
-            raise FileNotFoundError(
-                f"Could not open image or label at index {index}. Path: {img_path} or {label_path}. Original error: {e}"
-            )
         except Exception as e:
-            raise RuntimeError(
-                f"Error loading image/label at index {index} ({img_path}, {label_path}): {e}"
-            )
+            raise RuntimeError(f"Error loading PIL image {img_path}: {e}")
 
+        if self.convert_on_the_fly:
+            try:
+                label_pil_rgb = Image.open(label_path).convert("RGB")
+                label_rgb_np = np.array(label_pil_rgb)
+                label_id_np = self._convert_rgb_to_id_with_lut(label_rgb_np)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Error converting RGB label {label_path} on-the-fly: {e}"
+                )
+        else:
+            try:
+                label_pil_gray = Image.open(label_path)
+                if label_pil_gray.mode != "L" and label_pil_gray.mode != "P":
+                    print(
+                        f"Warning: Pre-converted label {label_path} mode {label_pil_gray.mode}. Converting to 'L'."
+                    )
+                    label_pil_gray = label_pil_gray.convert("L")
+                label_id_np = np.array(label_pil_gray, dtype=np.uint8)
+                if label_id_np.ndim == 3:
+                    if label_id_np.shape[2] == 1:
+                        label_id_np = label_id_np.squeeze(-1)
+                    else:
+                        raise ValueError(
+                            f"Pre-converted label {label_path} not single channel. Shape: {label_id_np.shape}"
+                        )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Error loading pre-converted label {label_path}: {e}"
+                )
         img_np = np.array(img_pil)
-        label_rgb_np = np.array(label_pil)
-
-        # Convert RGB label to single-channel ID map
-        label_id_np = self._convert_rgb_to_id(
-            label_rgb_np
-        )  # This is now (H, W) with class IDs
-
         if self.transforms:
             try:
-                # Albumentations expects 'mask' to be the 2D label map
                 transformed = self.transforms(image=img_np, mask=label_id_np)
                 image_tensor, label_tensor = transformed["image"], transformed["mask"]
             except Exception as e:

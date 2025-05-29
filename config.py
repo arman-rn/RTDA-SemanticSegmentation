@@ -19,6 +19,13 @@ GTA5_DATASET_PATH = f"{ROOT_DIR}/data/GTA5"
 # CITYSCAPES_DATASET_PATH = '/content/datasets/cityscapes'
 # GTA5_DATASET_PATH = '/content/datasets/gta5'
 
+# --- GTA5 Label Configuration ---
+GTA5_CONVERT_LABELS_ON_THE_FLY = False  # Set to False to use pre-converted labels
+GTA5_ORIGINAL_LABELS_SUBDIR = "labels"  # Subdir for original RGB GTA5 labels
+GTA5_PRECONVERTED_LABELS_SUBDIR = (
+    "labels_trainids"  # Subdir for pre-converted ID labels
+)
+
 # --- Model Selection ---
 MODEL_NAME = "bisenet"  # Options: "deeplabv2", "bisenet"
 
@@ -62,7 +69,7 @@ GTA5_IMG_WIDTH = 1280
 # --- DataLoader Settings ---
 # Number of worker processes for data loading.
 # For Colab T4, 2 is suggested. For A100, can try 2 or 4.
-DATALOADER_NUM_WORKERS = 4  # Default value, can be adjusted based on environment
+DATALOADER_NUM_WORKERS = 16  # Default value, can be adjusted based on environment
 
 # --- Training Hyperparameters ---
 TRAIN_EPOCHS = 50  # The total number of times the training loop will iterate over the entire training dataset (50 epochs for Step 2a).

@@ -25,7 +25,7 @@ ConfigModule = Any
 # --- DataLoader Getter Function ---
 def get_loaders(
     config_obj: ConfigModule,
-    train_dataset_name: str = "cityscapes",
+    train_dataset_name: str = "gta5",
     val_dataset_name: str = "cityscapes",
 ) -> Tuple[DataLoader, DataLoader]:
     """
@@ -68,8 +68,21 @@ def get_loaders(
         print(
             f"Using GTA5 training transforms (resize to {config_obj.GTA5_IMG_WIDTH}x{config_obj.GTA5_IMG_HEIGHT})."
         )
+        # Determine which label subdirectory to use and if conversion is on-the-fly
+        convert_on_the_fly = config_obj.GTA5_CONVERT_LABELS_ON_THE_FLY
+        if convert_on_the_fly:
+            labels_subdir = config_obj.GTA5_ORIGINAL_LABELS_SUBDIR
+            print(
+                f"GTA5 labels will be converted on-the-fly from subdir: '{labels_subdir}'"
+            )
+        else:
+            labels_subdir = config_obj.GTA5_PRECONVERTED_LABELS_SUBDIR
+            print(f"GTA5 will use pre-converted labels from subdir: '{labels_subdir}'")
+
         train_dataset = GTA5(
             gta5_path=config_obj.GTA5_DATASET_PATH,
+            labels_subdir=labels_subdir,
+            convert_on_the_fly=convert_on_the_fly,
             transforms=config_obj.GTA5_TRAIN_TRANSFORMS,
         )
     else:
@@ -99,9 +112,20 @@ def get_loaders(
         print(
             f"Using GTA5 validation transforms (resize to {config_obj.GTA5_IMG_WIDTH}x{config_obj.GTA5_IMG_HEIGHT})."
         )
+        convert_on_the_fly_val = config_obj.GTA5_CONVERT_LABELS_ON_THE_FLY
+        if convert_on_the_fly_val:
+            labels_subdir_val = config_obj.GTA5_ORIGINAL_LABELS_SUBDIR
+        else:
+            labels_subdir_val = config_obj.GTA5_PRECONVERTED_LABELS_SUBDIR
+        print(
+            f"GTA5 validation labels from subdir '{labels_subdir_val}', convert_on_the_fly={convert_on_the_fly_val}"
+        )
+
         val_dataset = GTA5(
             gta5_path=config_obj.GTA5_DATASET_PATH,
-            transforms=config_obj.GTA5_TRAIN_TRANSFORMS,  # Or a dedicated GTA5_VAL_TRANSFORMS
+            labels_subdir=labels_subdir_val,
+            convert_on_the_fly=convert_on_the_fly_val,
+            transforms=config_obj.GTA5_TRAIN_TRANSFORMS,  # Or a dedicated GTA5_VAL_TRANSFORMS if you create one
         )
     else:
         raise ValueError(f"Unsupported validation dataset: {val_dataset_name}")
