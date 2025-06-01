@@ -415,7 +415,9 @@ def load_checkpoint(
     )  # Load to specified device or CPU
 
     try:
-        checkpoint: Dict[str, Any] = torch.load(filepath, map_location=map_location)
+        checkpoint: Dict[str, Any] = torch.load(
+            filepath, map_location=map_location, weight_only=False
+        )
     except Exception as e:
         print(
             f"Error loading checkpoint file '{filepath}': {e}. Returning empty state."
