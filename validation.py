@@ -121,7 +121,12 @@ def validate_and_log(
             and (epoch + 1) > 0
         ):  # Ensure not epoch 0 if 0-indexed
             log_segmentation_to_wandb(
-                images, labels, preds, epoch + 1, config_module_ref
+                images,
+                labels,
+                preds,
+                epoch + 1,
+                config_module_ref,
+                global_step=global_step,
             )  # Pass config_module_ref for NORM_MEAN/STD
             first_batch_images_logged = True
 

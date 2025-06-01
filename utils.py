@@ -190,6 +190,7 @@ def log_segmentation_to_wandb(
     pred_masks: torch.Tensor,  # These are also 2D label ID tensors (B, H, W)
     epoch: int,  # Current epoch number (1-indexed for display)
     current_config: ConfigModule,  # The config module (e.g., cfg)
+    global_step: int,
     max_images: int = 4,
 ) -> None:
     """
@@ -258,7 +259,7 @@ def log_segmentation_to_wandb(
         log_dict[f"Validation_Epoch_{epoch}_Sample_{i + 1}"] = wandb_image
 
     if log_dict:
-        wandb.log(log_dict)
+        wandb.log(log_dict, step=global_step)
 
 
 # --- Performance Metrics (FLOPs, Latency) ---
