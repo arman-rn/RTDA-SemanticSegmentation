@@ -512,9 +512,7 @@ def main():
         f"| Parameters (M)               | {perf_metrics.get('params_m', -1.0):.2f} |"
     )
 
-    print(
-        "\nPer-Class IoUs from Best Model Checkpoint (for Table 3):"
-    )  # Changed title slightly
+    print("\nPer-Class IoUs from Best Model Checkpoint:")
     print("| Class Name           | IoU     |")
     print("|----------------------|---------|")
     if (
