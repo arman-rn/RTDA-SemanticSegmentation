@@ -101,45 +101,6 @@ BISENET_CONTEXT_PATH = "resnet18"
 # --- Hardware ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# --- Normalization Parameters (ImageNet) ---
-# Standard mean and standard deviation values for datasets pretrained on ImageNet. Used to normalize input images.
-NORM_MEAN = (0.485, 0.456, 0.406)
-NORM_STD = (0.229, 0.224, 0.225)
-
-# --- Augmentations ---
-# Defines image preprocessing and augmentation pipelines using the albumentations library.
-#   A.Compose([...]): Chains multiple transformations.
-#   A.Resize: Resizes images to the specified IMG_HEIGHT and IMG_WIDTH.
-#   A.Normalize: Normalizes pixel values using NORM_MEAN and NORM_STD.
-#   ToTensorV2(): Converts the image (and mask) from a NumPy array to a PyTorch tensor and permutes image dimensions from (H, W, C) to (C, H, W).
-
-# For training on GTA5
-GTA5_TRAIN_TRANSFORMS = A.Compose(
-    [
-        A.Resize(height=GTA5_IMG_HEIGHT, width=GTA5_IMG_WIDTH),
-        A.Normalize(mean=NORM_MEAN, std=NORM_STD),
-        ToTensorV2(),
-    ]
-)
-
-# For training on Cityscapes
-CITYSCAPES_TRAIN_TRANSFORMS = A.Compose(
-    [
-        A.Resize(height=CITYSCAPES_IMG_HEIGHT, width=CITYSCAPES_IMG_WIDTH),
-        A.Normalize(mean=NORM_MEAN, std=NORM_STD),
-        ToTensorV2(),
-    ]
-)
-
-# For validating on Cityscapes
-CITYSCAPES_VAL_TRANSFORMS = A.Compose(
-    [
-        A.Resize(height=CITYSCAPES_IMG_HEIGHT, width=CITYSCAPES_IMG_WIDTH),
-        A.Normalize(mean=NORM_MEAN, std=NORM_STD),
-        ToTensorV2(),
-    ]
-)
-
 # --- Logging & Saving ---
 PRINT_FREQ_BATCH = 100  # Print training status every N batches
 VALIDATE_FREQ_EPOCH = 1  # Validate every N epochs (set to 1 for validation each epoch)
@@ -149,3 +110,158 @@ WANDB_LOG_IMAGES_FREQ_EPOCH = 10  # Log sample images to W&B every N epochs
 # Parameters for calculating latency and FPS, as suggested in the project description's pseudo-code.
 LATENCY_ITERATIONS = 100
 WARMUP_ITERATIONS = 10
+
+# --- Augmentations ---
+# Defines image preprocessing and augmentation pipelines using the albumentations library.
+#   A.Compose([...]): Chains multiple transformations.
+#   A.Resize: Resizes images to the specified IMG_HEIGHT and IMG_WIDTH.
+#   A.Normalize: Normalizes pixel values using NORM_MEAN and NORM_STD.
+#   ToTensorV2(): Converts the image (and mask) from a NumPy array to a PyTorch tensor and permutes image dimensions from (H, W, C) to (C, H, W).
+
+# --- Normalization Parameters (ImageNet) ---
+# Standard mean and standard deviation values for datasets pretrained on ImageNet. Used to normalize input images.
+NORM_MEAN = (0.485, 0.456, 0.406)
+NORM_STD = (0.229, 0.224, 0.225)
+
+# --- Base Transform Components (Applied in all GTA5 training pipelines) ---
+gta5_base_resize = A.Resize(height=GTA5_IMG_HEIGHT, width=GTA5_IMG_WIDTH)
+common_normalize = A.Normalize(mean=NORM_MEAN, std=NORM_STD)
+common_to_tensor = ToTensorV2()
+
+# --- Define Four Individual Augmentation Transforms ---
+# All are applied with p=0.5 as per project requirements.
+
+# 1. Horizontal Flip
+aug_transform_hflip = A.HorizontalFlip(p=0.5)
+
+# 2. Color Jitter
+aug_transform_colorjitter = A.ColorJitter(
+    brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1, p=0.5
+)
+
+# 3. ISONoise
+aug_transform_isonoise = A.ISONoise(
+    intensity=(0.1, 0.3), color_shift=(0.01, 0.05), p=0.5
+)
+
+# 4. Coarse Dropout
+aug_transform_coarsedropout = A.CoarseDropout(
+    num_holes_range=(1, 8),  # Number of holes will be randomly chosen between 1 and 8.
+    hole_height_range=(
+        20,
+        60,
+    ),  # Height of holes (in pixels) will be between 20 and 60.
+    hole_width_range=(20, 60),  # Width of holes (in pixels) will be between 20 and 60.
+    fill=0,  # Value to fill the dropped regions.
+    p=0.5,  # Probability of applying the transform.
+)
+
+# --- Define Pipelines for Individual Augmentations (for your expanded Table 4) ---
+
+# Pipeline for HorizontalFlip only
+GTA5_TRAIN_TRANSFORMS_HFLIP_ONLY = A.Compose(
+    [
+        gta5_base_resize,
+        aug_transform_hflip,
+        common_normalize,
+        common_to_tensor,
+    ]
+)
+
+# Pipeline for ColorJitter only
+GTA5_TRAIN_TRANSFORMS_COLORJITTER_ONLY = A.Compose(
+    [
+        gta5_base_resize,
+        aug_transform_colorjitter,
+        common_normalize,
+        common_to_tensor,
+    ]
+)
+
+# Pipeline for ISONoise only
+GTA5_TRAIN_TRANSFORMS_ISONOISE_ONLY = A.Compose(
+    [
+        gta5_base_resize,
+        aug_transform_isonoise,
+        common_normalize,
+        common_to_tensor,
+    ]
+)
+
+# Pipeline for CoarseDropout only
+GTA5_TRAIN_TRANSFORMS_COARSEDROPOUT_ONLY = A.Compose(
+    [
+        gta5_base_resize,
+        aug_transform_coarsedropout,
+        common_normalize,
+        common_to_tensor,
+    ]
+)
+
+# --- Pipeline: Combining ALL FOUR suggested augmentations ---
+# The order of augmentations can matter. A common sequence is geometric -> color/intensity -> noise -> structural.
+GTA5_TRAIN_TRANSFORMS_ALL_FOUR_COMBINED = A.Compose(
+    [
+        gta5_base_resize,
+        aug_transform_hflip,  # Geometric
+        aug_transform_colorjitter,  # Color/Intensity
+        aug_transform_isonoise,  # Noise
+        aug_transform_coarsedropout,  # Structural
+        common_normalize,
+        common_to_tensor,
+    ]
+)
+
+# --- Original GTA5 Training Transforms (Step 3a - No NEW Augmentations) ---
+# This is your baseline from before Step 3b.
+GTA5_TRAIN_TRANSFORMS_NO_NEW_AUG = A.Compose(
+    [
+        gta5_base_resize,
+        common_normalize,
+        common_to_tensor,
+    ]
+)
+
+
+# --- Cityscapes Transforms (remain unchanged) ---
+CITYSCAPES_TRAIN_TRANSFORMS = A.Compose(
+    [
+        A.Resize(height=CITYSCAPES_IMG_HEIGHT, width=CITYSCAPES_IMG_WIDTH),
+        common_normalize,
+        common_to_tensor,
+    ]
+)
+
+CITYSCAPES_VAL_TRANSFORMS = A.Compose(
+    [
+        A.Resize(height=CITYSCAPES_IMG_HEIGHT, width=CITYSCAPES_IMG_WIDTH),
+        common_normalize,
+        common_to_tensor,
+    ]
+)
+
+
+# --- ACTIVATE THE DESIRED GTA5 TRAINING PIPELINE FOR THE CURRENT EXPERIMENT ---
+# Uncomment ONE of the following lines to select the transforms for the current run.
+# This `GTA5_TRAIN_TRANSFORMS` variable is what `data_loader.py` will use.
+
+# For Step 3a (baseline, if you need to re-run):
+# GTA5_TRAIN_TRANSFORMS = GTA5_TRAIN_TRANSFORMS_NO_NEW_AUG
+
+# --- For Step 3b (Expanded Table 4) ---
+# 1. Experiment with HorizontalFlip only:
+# GTA5_TRAIN_TRANSFORMS = GTA5_TRAIN_TRANSFORMS_HFLIP_ONLY
+
+# 2. Experiment with ColorJitter only:
+# GTA5_TRAIN_TRANSFORMS = GTA5_TRAIN_TRANSFORMS_COLORJITTER_ONLY
+
+# 3. Experiment with ISONoise only:
+# GTA5_TRAIN_TRANSFORMS = GTA5_TRAIN_TRANSFORMS_ISONOISE_ONLY
+
+# 4. Experiment with CoarseDropout only:
+# GTA5_TRAIN_TRANSFORMS = GTA5_TRAIN_TRANSFORMS_COARSEDROPOUT_ONLY
+
+# 5. Experiment with all four combined:
+GTA5_TRAIN_TRANSFORMS = (
+    GTA5_TRAIN_TRANSFORMS_ALL_FOUR_COMBINED  # Defaulting to all four for now
+)

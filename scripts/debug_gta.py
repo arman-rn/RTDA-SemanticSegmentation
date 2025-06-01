@@ -1,27 +1,31 @@
-import random
+# import random
 
+import albumentations as A
 import matplotlib.pyplot as plt
-from albumentations import Compose, Resize
 from albumentations.pytorch import ToTensorV2
 
-from datasets import CityScapes
+from datasets import GTA5
 
 
 def get_transforms():
-    return Compose(
+    return A.Compose(
         [
-            Resize(512, 1024),
-            # Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            A.Resize(height=720, width=1280),
+            A.ISONoise(intensity=(0.1, 0.3), color_shift=(0.01, 0.05), p=1),
             ToTensorV2(),
         ]
     )
 
 
 def main():
-    dataset = CityScapes(
-        cityscapes_path="data/Cityscapes", split="train", transforms=get_transforms()
+    dataset = GTA5(
+        gta5_path="data/GTA5",
+        labels_subdir="labels_trainids",
+        convert_on_the_fly=False,
+        transforms=get_transforms(),
     )
-    idx = random.randrange(len(dataset))
+    # idx = random.randrange(len(dataset))
+    idx = 0
     img, label = dataset[idx]
 
     # img is a FloatTensor C×H×W, label is LongTensor H×W
