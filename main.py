@@ -19,8 +19,8 @@ from typing import Any, Optional
 
 import numpy as np
 import torch
-import wandb  # For Weights & Biases integration
-from torch import GradScaler, nn, optim  # For type hints
+import wandb
+from torch import GradScaler, nn, optim
 
 import config as cfg
 from data_loader import CITYSCAPES_ID_TO_NAME_MAP, get_loaders
@@ -31,17 +31,21 @@ from utils import (
     init_wandb,
     load_checkpoint,
     save_checkpoint,
+    set_seeds,
 )
 from validation import validate_and_log
 
 # Type alias for the config module for clarity
-ConfigModule = Any  # Could be replaced with a Protocol if config structure is strict
+ConfigModule = Any
 
 
 def main():
     """
     Main function to run the training and evaluation pipeline.
     """
+
+    set_seeds(cfg.SEED_VALUE)
+
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(
         description="Semantic Segmentation Training Script"
@@ -197,6 +201,10 @@ def main():
     print(
         f"  - Path: {cfg.GTA5_DATASET_PATH if cfg.VAL_DATASET == 'gta5' else cfg.CITYSCAPES_DATASET_PATH}"
     )
+    if cfg.TRAIN_DATASET == "gta5":
+        print(
+            f"GTA5 Transformations: {list(map(lambda x: x.__class__.__name__, cfg.GTA5_TRAIN_TRANSFORMS))}"
+        )
     if cfg.MODEL_NAME == "bisenet":
         print(f"BiSeNet Context Path: {cfg.BISENET_CONTEXT_PATH}")
     print(f"Optimizer: {cfg.OPTIMIZER_TYPE.upper()}")

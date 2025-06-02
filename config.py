@@ -4,6 +4,8 @@ import albumentations as A
 import torch
 from albumentations.pytorch import ToTensorV2
 
+SEED_VALUE = 42
+
 # --- W&B Project Details ---
 WANDB_PROJECT_NAME = "RTDA-SemSeg"
 WANDB_ENTITY = "RTDA-SemSeg"  # Your W&B username or team name, if None, it uses default
