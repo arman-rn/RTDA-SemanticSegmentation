@@ -158,7 +158,7 @@ aug_transform_coarsedropout = A.CoarseDropout(
     p=0.5,  # Probability of applying the transform.
 )
 
-# --- Define Pipelines for Individual Augmentations (for your expanded Table 4) ---
+# --- Define Pipelines for Individual Augmentations ---
 
 # Pipeline for HorizontalFlip only
 GTA5_TRAIN_TRANSFORMS_HFLIP_ONLY = A.Compose(
@@ -215,7 +215,6 @@ GTA5_TRAIN_TRANSFORMS_ALL_FOUR_COMBINED = A.Compose(
 )
 
 # --- Original GTA5 Training Transforms (Step 3a - No NEW Augmentations) ---
-# This is your baseline from before Step 3b.
 GTA5_TRAIN_TRANSFORMS_NO_NEW_AUG = A.Compose(
     [
         gta5_base_resize,
@@ -225,7 +224,7 @@ GTA5_TRAIN_TRANSFORMS_NO_NEW_AUG = A.Compose(
 )
 
 
-# --- Cityscapes Transforms (remain unchanged) ---
+# --- Cityscapes Transforms ---
 CITYSCAPES_TRAIN_TRANSFORMS = A.Compose(
     [
         A.Resize(height=CITYSCAPES_IMG_HEIGHT, width=CITYSCAPES_IMG_WIDTH),
@@ -247,10 +246,10 @@ CITYSCAPES_VAL_TRANSFORMS = A.Compose(
 # Uncomment ONE of the following lines to select the transforms for the current run.
 # This `GTA5_TRAIN_TRANSFORMS` variable is what `data_loader.py` will use.
 
-# For Step 3a (baseline, if you need to re-run):
+# For Step 3a (baseline):
 # GTA5_TRAIN_TRANSFORMS = GTA5_TRAIN_TRANSFORMS_NO_NEW_AUG
 
-# --- For Step 3b (Expanded Table 4) ---
+# --- For Step 3b ---
 # 1. Experiment with HorizontalFlip only:
 # GTA5_TRAIN_TRANSFORMS = GTA5_TRAIN_TRANSFORMS_HFLIP_ONLY
 
@@ -264,6 +263,4 @@ CITYSCAPES_VAL_TRANSFORMS = A.Compose(
 # GTA5_TRAIN_TRANSFORMS = GTA5_TRAIN_TRANSFORMS_COARSEDROPOUT_ONLY
 
 # 5. Experiment with all four combined:
-GTA5_TRAIN_TRANSFORMS = (
-    GTA5_TRAIN_TRANSFORMS_ALL_FOUR_COMBINED  # Defaulting to all four for now
-)
+GTA5_TRAIN_TRANSFORMS = GTA5_TRAIN_TRANSFORMS_ALL_FOUR_COMBINED
