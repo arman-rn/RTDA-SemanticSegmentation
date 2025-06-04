@@ -2,12 +2,16 @@
 Handles the instantiation and loading of segmentation models (DeepLabV2, BiSeNet).
 """
 
-from typing import Any
+from typing import Any, Optional
 
 from torch import nn
 
+# Import segmentation models (Generator)
 from models.bisenet.build_bisenet import BiSeNet
 from models.deeplabv2.deeplabv2 import get_deeplab_v2
+
+# Import Discriminator model
+from models.discriminator.discriminator import FCDiscriminator
 
 ConfigModule = Any
 
@@ -67,3 +71,33 @@ def get_model(config_obj: ConfigModule) -> nn.Module:
     model.to(device)
     print(f"Model '{config_obj.MODEL_NAME}' moved to device: {device}")
     return model
+
+
+def get_discriminator(config_obj: ConfigModule) -> Optional[nn.Module]:
+    """
+    Loads and initializes the discriminator model for adversarial training.
+
+    Args:
+        config_obj: The configuration object (e.g., the imported cfg module)
+                    containing settings like NUM_CLASSES and DEVICE.
+
+    Returns:
+        An initialized FCDiscriminator model (subclass of torch.nn.Module)
+        on the specified device if FCDiscriminator is available, otherwise None.
+    """
+    print("Initializing Discriminator (FCDiscriminator)...")
+    num_classes = (
+        config_obj.NUM_CLASSES
+    )  # Discriminator input channels depend on generator's output classes
+    device = config_obj.DEVICE
+
+    # Instantiate the FCDiscriminator
+    discriminator = FCDiscriminator(num_classes=num_classes)
+    discriminator.to(device)
+
+    print(
+        f"Discriminator (FCDiscriminator) model initialized with {num_classes} input channels."
+    )
+    print(f"Discriminator moved to device: {device}")
+
+    return discriminator

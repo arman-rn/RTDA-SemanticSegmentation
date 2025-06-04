@@ -7,9 +7,10 @@ from config.py to create PyTorch DataLoaders. DataLoaders are responsible
 for efficiently loading data in batches, shuffling, and enabling
 multi-process data loading for training and validation.
 It also includes utility functions for visualizing segmentation masks and class mappings.
+For adversarial training, it can also provide a DataLoader for unlabeled target domain images.
 """
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -22,14 +23,45 @@ from datasets.gta5 import GTA5
 ConfigModule = Any
 
 
+# Helper to make a loader effectively infinite for adversarial training
+class InfiniteDataLoader:
+    """
+    A wrapper for a PyTorch DataLoader that allows for infinite iteration.
+    When the underlying DataLoader is exhausted, its iterator is reset.
+    """
+
+    def __init__(self, data_loader: DataLoader):
+        self.data_loader = data_loader
+        self.iterator = iter(self.data_loader)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            return next(self.iterator)
+        except StopIteration:
+            print("Target DataLoader iterator reset.")  # Optional: for debugging
+            self.iterator = iter(self.data_loader)  # Reset iterator
+            return next(self.iterator)
+
+    def __len__(self):
+        """Returns the length of the underlying data_loader."""
+        return len(self.data_loader)
+
+
 # --- DataLoader Getter Function ---
 def get_loaders(
     config_obj: ConfigModule,
     train_dataset_name: str = "gta5",
     val_dataset_name: str = "cityscapes",
-) -> Tuple[DataLoader, DataLoader]:
+    # Parameters for optionally loading the target unlabeled dataset for adversarial training
+    load_target_loader: bool = False,
+    target_dataset_name: Optional[str] = None,
+    target_dataset_split: Optional[str] = None,
+) -> Tuple[DataLoader, DataLoader, Optional[InfiniteDataLoader]]:
     """
-    Creates and returns training and validation PyTorch DataLoaders.
+    Creates and returns training, validation, and optionally target PyTorch DataLoaders.
 
     It uses the dataset classes (imported from datasets.cityscapes)
     and applies transformations specified in the configuration object.
@@ -39,10 +71,20 @@ def get_loaders(
             containing paths, batch size, number of workers, and transformations.
         train_dataset_name (str): Name of the dataset for training ("cityscapes" or "gta5").
         val_dataset_name (str): Name of the dataset for validation ("cityscapes" or "gta5").
+        load_target_loader (bool): If True, creates and returns a target_loader for
+                                   unlabeled target domain images.
+        target_dataset_name (str, optional): Name of the dataset for unlabeled target images.
+                                             Required if load_target_loader is True.
+        target_dataset_split (str, optional): Split of the target dataset (e.g., 'train').
+                                              Required if load_target_loader is True.
 
     Returns:
-        A tuple containing the training DataLoader and the validation DataLoader.
-        (train_loader, val_loader)
+        A tuple containing:
+        - train_loader (DataLoader): For the source labeled dataset.
+        - val_loader (DataLoader): For the validation dataset.
+        - target_loader_infinite (Optional[InfiniteDataLoader]): For the target unlabeled dataset,
+          wrapped in an InfiniteDataLoader. Returns None if load_target_loader is False.
+
 
     Raises:
         ValueError: If the training or validation dataset is found to be empty
@@ -50,7 +92,7 @@ def get_loaders(
             or the dataset class implementation.
     """
 
-    # --- Training Dataset ---
+    # --- Source (Labeled Training) Dataset ---
     if train_dataset_name.lower() == "cityscapes":
         print(
             f"Loading Cityscapes training data from: {config_obj.CITYSCAPES_DATASET_PATH}"
@@ -106,27 +148,6 @@ def get_loaders(
             split="val",
             transforms=config_obj.CITYSCAPES_VAL_TRANSFORMS,
         )
-    elif val_dataset_name.lower() == "gta5":
-        # This case is not needed but supported
-        print(f"Loading GTA5 validation data from: {config_obj.GTA5_DATASET_PATH}")
-        print(
-            f"Using GTA5 validation transforms (resize to {config_obj.GTA5_IMG_WIDTH}x{config_obj.GTA5_IMG_HEIGHT})."
-        )
-        convert_on_the_fly_val = config_obj.GTA5_CONVERT_LABELS_ON_THE_FLY
-        if convert_on_the_fly_val:
-            labels_subdir_val = config_obj.GTA5_ORIGINAL_LABELS_SUBDIR
-        else:
-            labels_subdir_val = config_obj.GTA5_PRECONVERTED_LABELS_SUBDIR
-        print(
-            f"GTA5 validation labels from subdir '{labels_subdir_val}', convert_on_the_fly={convert_on_the_fly_val}"
-        )
-
-        val_dataset = GTA5(
-            gta5_path=config_obj.GTA5_DATASET_PATH,
-            labels_subdir=labels_subdir_val,
-            convert_on_the_fly=convert_on_the_fly_val,
-            transforms=config_obj.GTA5_TRAIN_TRANSFORMS,  # Or a dedicated GTA5_VAL_TRANSFORMS if you create one
-        )
     else:
         raise ValueError(f"Unsupported validation dataset: {val_dataset_name}")
 
@@ -134,6 +155,60 @@ def get_loaders(
         raise ValueError(f"CRITICAL: Validation dataset '{val_dataset_name}' is empty.")
 
     print(f"Found {len(val_dataset)} validation images for {val_dataset_name}.")
+
+    # --- Target (Unlabeled) Dataset for Adversarial Training ---
+    target_loader_infinite: Optional[InfiniteDataLoader] = None
+    if load_target_loader:
+        if not target_dataset_name or not target_dataset_split:
+            raise ValueError(
+                "If load_target_loader is True, target_dataset_name and target_dataset_split must be provided."
+            )
+
+        print(
+            f"Preparing Target (Unlabeled) DataLoader for {target_dataset_name}, split '{target_dataset_split}'..."
+        )
+        if target_dataset_name.lower() == "cityscapes":
+            target_dataset_path = config_obj.CITYSCAPES_DATASET_PATH
+            # For unlabeled target Cityscapes images, use the 'train' split's images.
+            # Transforms should be consistent with how Cityscapes images are processed.
+            # Using CITYSCAPES_TRAIN_TRANSFORMS is a reasonable default.
+            target_transforms = config_obj.CITYSCAPES_TRAIN_TRANSFORMS
+            print(
+                f"Loading Cityscapes (Target, Unlabeled) data from: {target_dataset_path}, split: {target_dataset_split}"
+            )
+            print(
+                f"Using Cityscapes TRAIN transforms for target (resize to {config_obj.CITYSCAPES_IMG_WIDTH}x{config_obj.CITYSCAPES_IMG_HEIGHT})."
+            )
+            target_dataset_unlabeled = CityScapes(
+                cityscapes_path=target_dataset_path,
+                split=target_dataset_split,  # Should be 'train' for Cityscapes target
+                transforms=target_transforms,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported adversarial target dataset: {target_dataset_name}"
+            )
+
+        if not len(target_dataset_unlabeled):
+            raise ValueError(
+                f"CRITICAL: Adversarial Target dataset '{target_dataset_name}' (split: {target_dataset_split}) is empty."
+            )
+        print(
+            f"Found {len(target_dataset_unlabeled)} target (unlabeled) images for {target_dataset_name}."
+        )
+
+        _target_dl_standard = DataLoader(
+            target_dataset_unlabeled,
+            batch_size=config_obj.BATCH_SIZE,  # Match source batch size for simplicity
+            shuffle=True,
+            num_workers=config_obj.DATALOADER_NUM_WORKERS,
+            pin_memory=True,
+            drop_last=True,  # Important for consistent batch sizes
+        )
+        target_loader_infinite = InfiniteDataLoader(_target_dl_standard)
+        print(
+            f"Target loader (unlabeled) created with {len(_target_dl_standard.dataset)} images, wrapped for infinite iteration."
+        )
 
     train_loader = DataLoader(
         train_dataset,
@@ -150,7 +225,7 @@ def get_loaders(
         num_workers=config_obj.DATALOADER_NUM_WORKERS,
         pin_memory=True,
     )
-    return train_loader, val_loader
+    return train_loader, val_loader, target_loader_infinite
 
 
 # --- Color and Name Mappings for Visualization ---

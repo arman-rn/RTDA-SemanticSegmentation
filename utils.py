@@ -3,9 +3,8 @@ Collection of utility functions for the semantic segmentation project.
 
 Includes learning rate schedulers, metrics calculation (mIoU, FLOPs, latency),
 Weights & Biases integration helpers, and image visualization utilities.
+Handles checkpoint saving/loading for generator and optionally discriminator.
 """
-# This file is a collection of various helper functions used across different parts of the project.
-# This includes learning rate scheduling, metrics calculation (mIoU, FLOPs, latency), and Weights & Biases integration helpers.
 
 import os
 import random
@@ -21,7 +20,7 @@ from torch import GradScaler, nn, optim
 from data_loader import CITYSCAPES_ID_TO_NAME_MAP
 
 # Type alias for the config module for clarity
-ConfigModule = Any  # Could be replaced with a Protocol if config structure is strict
+ConfigModule = Any
 
 
 # --- Learning Rate Scheduler ---
@@ -119,7 +118,9 @@ def per_class_iou(hist: np.ndarray) -> np.ndarray:
 
 # --- W&B Initialization ---
 def init_wandb(
-    cfg_module: ConfigModule, effective_optimizer_config: Dict[str, Any]
+    cfg_module: ConfigModule,
+    effective_optimizer_config: Dict[str, Any],
+    is_adversarial_training: bool = False,
 ) -> None:
     """
     Initializes a Weights & Biases (wandb) run for experiment tracking.
@@ -131,23 +132,26 @@ def init_wandb(
     """
     try:
         base_config_dict: Dict[str, Any] = {
+            "model_name (generator)": cfg_module.MODEL_NAME,
             "script_epochs": cfg_module.TRAIN_EPOCHS,  # Renamed to avoid conflict with wandb internal 'epochs'
             "batch_size": cfg_module.BATCH_SIZE,
-            "train_dataset": cfg_module.TRAIN_DATASET,
+            "train_dataset (source)": cfg_module.TRAIN_DATASET,  # Clarified for adversarial
             "validation_dataset": cfg_module.VAL_DATASET,
             "num_classes": cfg_module.NUM_CLASSES,
             "lr_scheduler_power": cfg_module.LR_SCHEDULER_POWER,
             "device": str(cfg_module.DEVICE),
             "norm_mean": cfg_module.NORM_MEAN,
             "norm_std": cfg_module.NORM_STD,
+            "seed": cfg_module.SEED_VALUE,
         }
 
-        if hasattr(cfg_module, "DEEPLABV2_PRETRAINED_BACKBONE_PATH"):
+        # Add generator's specific settings
+        if cfg_module.MODEL_NAME == "bisenet":
+            base_config_dict["bisenet_context_path"] = cfg_module.BISENET_CONTEXT_PATH
+        elif cfg_module.MODEL_NAME == "deeplabv2":
             base_config_dict["deeplabv2_pretrained_path"] = (
                 cfg_module.DEEPLABV2_PRETRAINED_BACKBONE_PATH
             )
-        if hasattr(cfg_module, "BISENET_CONTEXT_PATH"):
-            base_config_dict["bisenet_context_path"] = cfg_module.BISENET_CONTEXT_PATH
 
         base_config_dict["train_image_height"] = (
             cfg_module.GTA5_IMG_HEIGHT
@@ -160,19 +164,39 @@ def init_wandb(
             else cfg_module.CITYSCAPES_IMG_WIDTH
         )
 
-        base_config_dict["validation_image_height"] = (
-            cfg_module.GTA5_IMG_HEIGHT
-            if cfg_module.VAL_DATASET == "gta5"
-            else cfg_module.CITYSCAPES_IMG_HEIGHT
-        )
-        base_config_dict["validation_image_width"] = (
-            cfg_module.GTA5_IMG_WIDTH
-            if cfg_module.VAL_DATASET == "gta5"
-            else cfg_module.CITYSCAPES_IMG_WIDTH
-        )
+        # Assuming validation is always Cityscapes as per project structure
+        base_config_dict["validation_image_height"] = cfg_module.CITYSCAPES_IMG_HEIGHT
+        base_config_dict["validation_image_width"] = cfg_module.CITYSCAPES_IMG_WIDTH
 
         # Merge base config with effective optimizer config
         full_config: Dict[str, Any] = {**base_config_dict, **effective_optimizer_config}
+
+        # Add adversarial-specific configurations if applicable
+        if is_adversarial_training:
+            full_config["training_mode"] = "adversarial"
+            full_config["adversarial_source_dataset"] = (
+                cfg_module.ADVERSARIAL_SOURCE_DATASET_NAME
+            )
+            full_config["adversarial_target_dataset"] = (
+                cfg_module.ADVERSARIAL_TARGET_DATASET_NAME
+            )
+            full_config["adversarial_target_split"] = (
+                cfg_module.ADVERSARIAL_TARGET_DATASET_SPLIT
+            )
+            full_config["lambda_adv_generator"] = (
+                cfg_module.ADVERSARIAL_LAMBDA_ADV_GENERATOR
+            )
+
+            discriminator_opt_config = {
+                "type": cfg_module.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE,
+                "lr": cfg_module.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
+                "beta1": cfg_module.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA1,
+                "beta2": cfg_module.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA2,
+                "weight_decay": cfg_module.ADVERSARIAL_DISCRIMINATOR_WEIGHT_DECAY,
+            }
+            full_config["discriminator_optimizer"] = discriminator_opt_config
+        else:
+            full_config["training_mode"] = "vanilla"
 
         wandb.init(
             project=cfg_module.WANDB_PROJECT_NAME,
@@ -180,6 +204,7 @@ def init_wandb(
             config=full_config,
         )
         print("Weights & Biases initialized successfully.")
+        print(f"W&B Run Config: {wandb.config}")
     except Exception as e:
         print(f"Error initializing W&B: {e}. W&B logging will be disabled.")
 
@@ -361,6 +386,9 @@ def calculate_performance_metrics(
 def save_checkpoint(state: Dict[str, Any], filepath: str) -> None:
     """
     Saves the training state to a checkpoint file.
+    The `state` dictionary should contain all necessary components,
+    e.g., model_G_state_dict, optimizer_G_state_dict, and optionally
+    model_D_state_dict, optimizer_D_state_dict for adversarial training.
 
     Args:
         state: A dictionary containing the state to save (e.g., epoch,
@@ -388,33 +416,38 @@ def save_checkpoint(state: Dict[str, Any], filepath: str) -> None:
 
 def load_checkpoint(
     filepath: str,
-    model: nn.Module,
-    optimizer: Optional[optim.Optimizer] = None,
+    model_G: nn.Module,  # Generator model
+    optimizer_G: Optional[optim.Optimizer] = None,  # Optimizer for generator
     scaler: Optional[GradScaler] = None,
     device: Optional[torch.device] = None,
+    # Optional components for adversarial training
+    model_D: Optional[nn.Module] = None,  # Discriminator model
+    optimizer_D: Optional[optim.Optimizer] = None,  # Discriminator optimizer
 ) -> Dict[str, Any]:
     """
     Loads training state from a checkpoint file.
+    Handles both standard and adversarial training checkpoints.
 
     Args:
         filepath: Path to the checkpoint file.
-        model: The model instance to load the state_dict into.
-        optimizer: The optimizer instance to load the state_dict into (optional).
+        model_G: The generator model instance to load the state_dict into.
+        optimizer_G: The generator optimizer instance to load the state_dict into (optional).
         scaler: The GradScaler instance to load the state_dict into (optional).
         device: The torch.device to map the loaded tensors to. If None, loads to CPU first.
+        model_D: The discriminator model instance (optional, for adversarial).
+        optimizer_D: The discriminator optimizer instance (optional, for adversarial).
 
     Returns:
-        A dictionary containing the loaded state (epoch, global_step, best_miou, etc.),
-        or an empty dictionary if the checkpoint file is not found.
+        A dictionary containing the loaded state, or an empty dictionary if not found.
+        Keys include 'epoch', 'global_step', 'best_miou', 'best_model_per_class_ious'.
+        If adversarial, it may also contain 'model_D_state_dict', 'optimizer_D_state_dict'.
     """
     if not os.path.exists(filepath):
         print(f"Warning: Checkpoint file not found at '{filepath}'. Cannot resume.")
         return {}  # Return empty dict to indicate no checkpoint was loaded
 
     print(f"Loading checkpoint from '{filepath}'...")
-    map_location = (
-        device if device else torch.device("cpu")
-    )  # Load to specified device or CPU
+    map_location = device if device else torch.device("cpu")
 
     try:
         checkpoint: Dict[str, Any] = torch.load(
@@ -426,29 +459,75 @@ def load_checkpoint(
         )
         return {}
 
-    if "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"])
+    # Load Generator (model_G) state
+    # Prioritize new key 'model_G_state_dict', fallback to 'model_state_dict' for backward compatibility
+    g_model_state_key = (
+        "model_G_state_dict"
+        if "model_G_state_dict" in checkpoint
+        else "model_state_dict"
+    )
+    if g_model_state_key in checkpoint:
+        model_G.load_state_dict(checkpoint[g_model_state_key])
+        print(f"Generator ({g_model_state_key}) weights loaded.")
     else:
         print(
-            f"Warning: 'model_state_dict' not found in checkpoint '{filepath}'. Model weights not loaded."
+            f"Warning: Generator state_dict ('model_G_state_dict' or 'model_state_dict') not found in '{filepath}'."
         )
 
-    if optimizer and "optimizer_state_dict" in checkpoint:
+    # Load Generator Optimizer (optimizer_G) state
+    if optimizer_G:
+        g_opt_state_key = (
+            "optimizer_G_state_dict"
+            if "optimizer_G_state_dict" in checkpoint
+            else "optimizer_state_dict"
+        )
+        if g_opt_state_key in checkpoint:
+            try:
+                optimizer_G.load_state_dict(checkpoint[g_opt_state_key])
+                if (
+                    device and device.type == "cuda"
+                ):  # Move optimizer states to GPU if needed
+                    for state in optimizer_G.state.values():
+                        for k, v in state.items():
+                            if isinstance(v, torch.Tensor):
+                                state[k] = v.to(device)
+                print(f"Generator Optimizer ({g_opt_state_key}) state loaded.")
+            except Exception as e:
+                print(
+                    f"Warning: Could not load Generator Optimizer state ({g_opt_state_key}): {e}."
+                )
+        else:
+            print(
+                "Warning: Generator Optimizer state_dict ('optimizer_G_state_dict' or 'optimizer_state_dict') not found."
+            )
+
+    # Load Discriminator (model_D) state if model_D is provided and key exists
+    if model_D and "model_D_state_dict" in checkpoint:
+        model_D.load_state_dict(checkpoint["model_D_state_dict"])
+        print("Discriminator (model_D_state_dict) weights loaded.")
+    elif model_D:  # model_D provided but no state in checkpoint
+        print(
+            f"Note: Discriminator model provided, but 'model_D_state_dict' not found in '{filepath}'. Discriminator may start fresh."
+        )
+
+    # Load Discriminator Optimizer (optimizer_D) state if optimizer_D is provided and key exists
+    if optimizer_D and "optimizer_D_state_dict" in checkpoint:
         try:
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            # After loading optimizer state, if tensors were loaded to CPU via map_location,
-            # and the model/optimizer are meant to be on GPU, move optimizer states to GPU.
-            if device and device.type == "cuda":
-                for state in optimizer.state.values():
+            optimizer_D.load_state_dict(checkpoint["optimizer_D_state_dict"])
+            if device and device.type == "cuda":  # Move optimizer states to GPU
+                for state in optimizer_D.state.values():
                     for k, v in state.items():
                         if isinstance(v, torch.Tensor):
                             state[k] = v.to(device)
-            print("Optimizer state loaded.")
+            print("Discriminator Optimizer (optimizer_D_state_dict) state loaded.")
         except Exception as e:
-            print(
-                f"Warning: Could not load optimizer state: {e}. Optimizer state may be reset."
-            )
+            print(f"Warning: Could not load Discriminator Optimizer state: {e}.")
+    elif optimizer_D:  # optimizer_D provided but no state in checkpoint
+        print(
+            f"Note: Discriminator optimizer provided, but 'optimizer_D_state_dict' not found in '{filepath}'. Optimizer state may be reset."
+        )
 
+    # Load Scaler state
     if scaler and "scaler_state_dict" in checkpoint:
         try:
             scaler.load_state_dict(checkpoint["scaler_state_dict"])
@@ -458,7 +537,7 @@ def load_checkpoint(
                 f"Warning: Could not load GradScaler state: {e}. Scaler state may be reset."
             )
 
-    print("Checkpoint loaded successfully.")
+    print("Checkpoint loaded successfully (or attempted).")
     # Return relevant information for resuming training
     return {
         "epoch": checkpoint.get(
@@ -467,7 +546,7 @@ def load_checkpoint(
         "global_step": checkpoint.get("global_step", 0),
         "best_miou": checkpoint.get("best_miou", 0.0),
         "best_model_per_class_ious": checkpoint.get("best_model_per_class_ious"),
-        # Include any other saved metadata you need
+        # Checkpoint itself is returned implicitly by modifying models/optimizers in-place
     }
 
 
