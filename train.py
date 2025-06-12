@@ -160,7 +160,7 @@ def train_one_epoch(
     return avg_epoch_loss, current_global_step
 
 
-# --- New Adversarial Training Function ---
+# --- Adversarial Training Function ---
 def train_one_epoch_adversarial(
     # --- Generator (Segmentation Model) Components ---
     model_G: nn.Module,
@@ -173,6 +173,7 @@ def train_one_epoch_adversarial(
     optimizer_D: optim.Optimizer,
     criterion_adv: nn.Module,  # Adversarial loss (e.g., BCEWithLogitsLoss)
     train_loader_target: InfiniteDataLoader,  # DataLoader for unlabeled target domain data
+    initial_base_lr_D: float,
     # --- Common Training Loop Parameters ---
     device: torch.device,
     epoch: int,  # Current epoch number, 0-indexed
@@ -202,7 +203,7 @@ def train_one_epoch_adversarial(
     fake_label = 0.0  # Label for target domain samples (fake)
 
     progress_bar = tqdm(
-        enumerate(train_loader_source),  # Iterate based on source loader
+        enumerate(train_loader_source),
         total=len(train_loader_source),
         desc=f"Epoch {epoch + 1}/{effective_total_epochs} [Adv. Training]",
         unit="batch",
@@ -222,21 +223,18 @@ def train_one_epoch_adversarial(
         # Ensure batch sizes are consistent if models/losses require it (usually they do)
         if images_s.size(0) != images_t.size(0):
             print(
-                f"Warning: Source batch {images_s.size(0)} and target batch {images_t.size(0)} "
-                f"sizes differ. Skipping adversarial step for this batch."
+                f"Warning: Batch size mismatch. Source: {images_s.size(0)}, Target: {images_t.size(0)}. Skipping."
             )
-            # Optionally, only train G with segmentation loss or skip batch entirely
-            # For simplicity here, we might just update G's LR and global step.
-            # A more robust solution would be to ensure DataLoaders always yield same batch size if possible.
-            current_lr_G = poly_lr_scheduler(
-                optimizer_G,
-                initial_base_lr_G,
-                current_global_step,
-                max_iter,
-                config_module_ref.LR_SCHEDULER_POWER,
-            )
-            current_global_step += 1
             continue
+
+        # --- Update Learning Rates for BOTH G and D ---
+        lr_power = config_module_ref.LR_SCHEDULER_POWER
+        current_lr_G = poly_lr_scheduler(
+            optimizer_G, initial_base_lr_G, current_global_step, max_iter, lr_power
+        )
+        current_lr_D = poly_lr_scheduler(
+            optimizer_D, initial_base_lr_D, current_global_step, max_iter, lr_power
+        )
 
         # --- 1. Train Discriminator (model_D) ---
         # Maximize log(D(G_s(x_s))) + log(1 - D(G_t(x_t)))
@@ -245,12 +243,12 @@ def train_one_epoch_adversarial(
 
         # On source data (real)
         with torch.no_grad():  # Don't track gradients for G during D's source pass
-            outputs_s_G_detached = model_G(images_s)
             pred_s_logits_G_detached = (
-                outputs_s_G_detached[0]
-                if isinstance(outputs_s_G_detached, tuple)
-                else outputs_s_G_detached
+                model_G(images_s)[0]
+                if isinstance(model_G(images_s), tuple)
+                else model_G(images_s)
             )
+
         # Discriminator takes probability maps as input [cite: 76, 86]
         input_d_source = F.softmax(pred_s_logits_G_detached, dim=1).detach()
 
@@ -271,11 +269,10 @@ def train_one_epoch_adversarial(
 
         # On target data (fake)
         with torch.no_grad():  # Don't track gradients for G during D's target pass
-            outputs_t_G_detached = model_G(images_t)
             pred_t_logits_G_detached = (
-                outputs_t_G_detached[0]
-                if isinstance(outputs_t_G_detached, tuple)
-                else outputs_t_G_detached
+                model_G(images_t)[0]
+                if isinstance(model_G(images_t), tuple)
+                else model_G(images_t)
             )
         input_d_target = F.softmax(pred_t_logits_G_detached, dim=1).detach()
 
@@ -313,30 +310,29 @@ def train_one_epoch_adversarial(
             with torch.autocast(
                 device_type=device.type, dtype=torch.float16, enabled=True
             ):
-                outputs_s_G = model_G(images_s)
                 pred_s_logits_G = (
-                    outputs_s_G[0] if isinstance(outputs_s_G, tuple) else outputs_s_G
+                    model_G(images_s)[0]
+                    if isinstance(model_G(images_s), tuple)
+                    else model_G(images_s)
                 )
                 loss_seg = criterion_seg(pred_s_logits_G, labels_s)
         else:
-            outputs_s_G = model_G(images_s)
             pred_s_logits_G = (
-                outputs_s_G[0] if isinstance(outputs_s_G, tuple) else outputs_s_G
+                model_G(images_s)[0]
+                if isinstance(model_G(images_s), tuple)
+                else model_G(images_s)
             )
             loss_seg = criterion_seg(pred_s_logits_G, labels_s)
         running_loss_seg_G += loss_seg.item()
 
         # b) Adversarial loss on target data (G wants D to predict target as "real_label")
         # [cite: 89] (describes G's adv loss as maximizing D(P_t) being considered source)
-        outputs_t_G_for_adv = model_G(images_t)
         pred_t_logits_G_for_adv = (
-            outputs_t_G_for_adv[0]
-            if isinstance(outputs_t_G_for_adv, tuple)
-            else outputs_t_G_for_adv
+            model_G(images_t)[0]
+            if isinstance(model_G(images_t), tuple)
+            else model_G(images_t)
         )
-        input_d_target_for_g = F.softmax(
-            pred_t_logits_G_for_adv, dim=1
-        )  # No .detach() here!
+        input_d_target_for_g = F.softmax(pred_t_logits_G_for_adv, dim=1)
 
         if scaler:
             with torch.autocast(
@@ -358,7 +354,6 @@ def train_one_epoch_adversarial(
         # Total Generator loss
         lambda_adv = config_module_ref.ADVERSARIAL_LAMBDA_ADV_GENERATOR
         loss_G_total = loss_seg + lambda_adv * loss_adv
-
         if scaler:
             scaler.scale(loss_G_total).backward()
             scaler.step(optimizer_G)
@@ -370,24 +365,13 @@ def train_one_epoch_adversarial(
         if scaler:
             scaler.update()
 
-        # --- Update Learning Rate for G (and D if it has a scheduler) ---
-        current_lr_G = poly_lr_scheduler(
-            optimizer_G,
-            initial_base_lr_G,
-            current_global_step,
-            max_iter,
-            config_module_ref.LR_SCHEDULER_POWER,
-        )
-        # current_lr_D = ... # If D has a scheduler, update it here. For now, fixed LR via optimizer init.
-        # For simplicity, we assume D's LR is fixed as set in its optimizer or handled by Adam's adaptive nature.
-
         # --- Logging & Progress Bar ---
         postfix_dict = {
             "L_seg": f"{loss_seg.item():.3f}",
             "L_adv_G": f"{loss_adv.item():.3f}",
             "L_D": f"{loss_D.item():.3f}",
             "lr_G": f"{current_lr_G:.2e}",
-            # "lr_D": f"{optimizer_D.param_groups[0]['lr']:.2e}" # If needed
+            "lr_D": f"{current_lr_D:.2e}",
         }
         progress_bar.set_postfix(**postfix_dict)
 
@@ -400,23 +384,23 @@ def train_one_epoch_adversarial(
                 "train_adv/batch_loss_adv_G": loss_adv.item(),
                 "train_adv/batch_loss_D": loss_D.item(),
                 "train_adv/learning_rate_G": current_lr_G,
-                "train_adv/learning_rate_D": optimizer_D.param_groups[0][
-                    "lr"
-                ],  # Log D's current LR
+                "train_adv/learning_rate_D": current_lr_D,
             }
             wandb.log(log_payload, step=current_global_step)
 
         current_global_step += 1
 
     # Calculate average losses for the epoch
-    avg_losses_epoch: Dict[str, float] = {}
-    if num_batches_source > 0:
-        avg_losses_epoch["seg_loss_G"] = running_loss_seg_G / num_batches_source
-        avg_losses_epoch["adv_loss_G"] = running_loss_adv_G / num_batches_source
-        avg_losses_epoch["loss_D_total"] = running_loss_D_total / num_batches_source
-    else:
-        avg_losses_epoch["seg_loss_G"] = 0.0
-        avg_losses_epoch["adv_loss_G"] = 0.0
-        avg_losses_epoch["loss_D_total"] = 0.0
+    avg_losses_epoch: Dict[str, float] = {
+        "seg_loss_G": running_loss_seg_G / num_batches_source
+        if num_batches_source > 0
+        else 0.0,
+        "adv_loss_G": running_loss_adv_G / num_batches_source
+        if num_batches_source > 0
+        else 0.0,
+        "loss_D_total": running_loss_D_total / num_batches_source
+        if num_batches_source > 0
+        else 0.0,
+    }
 
     return avg_losses_epoch, current_global_step

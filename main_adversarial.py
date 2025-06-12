@@ -304,8 +304,7 @@ def main_adversarial():
             optimizer_D=optimizer_D,
             criterion_adv=criterion_adv,
             train_loader_target=target_loader_infinite,
-            # initial_base_lr_D is not explicitly passed if D uses fixed LR / Adam's adaptive.
-            # If D had its own scheduler, you'd pass its base LR here.
+            initial_base_lr_D=cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
             device=cfg.DEVICE,
             epoch=epoch,
             global_step_offset=global_step,
