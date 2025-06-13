@@ -277,7 +277,7 @@ ADVERSARIAL_TARGET_DATASET_SPLIT = "train"
 # Weight for the generator's adversarial loss component.
 # Paper [7] (Tsai et al. "Learning to Adapt Structured Output Space...") suggests lambda_adv = 0.001
 # for their single-level output space adaptation (see Table 3 and Section 6.1 Parameter Analysis).
-ADVERSARIAL_LAMBDA_ADV_GENERATOR = 0.01
+ADVERSARIAL_LAMBDA_ADV_GENERATOR = 0.002
 # ADVERSARIAL_LAMBDA_ADV_GENERATOR = 0.0002 # More Cautious Adaptation, This is useful if the discriminator's feedback is noisy or hurting the segmentation performance.
 
 # --- Discriminator Optimizer Settings ---
