@@ -91,7 +91,8 @@ SGD_LEARNING_RATE = 2.5e-4  # As per previous setup for SGD
 SGD_MOMENTUM = 0.9
 
 # Adam specific parameters
-ADAM_LEARNING_RATE = 1e-4  # Typical starting LR for Adam
+# ADAM_LEARNING_RATE = 1e-4  # Typical starting LR for Adam
+ADAM_LEARNING_RATE = 5e-5
 # ADAM_BETA1 = 0.9  # Beta1 parameter for Adam optimizer
 # ADAM_BETA2 = 0.999  # Beta2 parameter for Adam optimizer
 
@@ -284,7 +285,8 @@ ADVERSARIAL_LAMBDA_ADV_GENERATOR = 0.002
 # Paper [7] uses Adam for the discriminator.
 ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE = "adam"
 # ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 1e-4  # As per Paper [7] for discriminator.
-ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 2.5e-5
+# ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 2.5e-5
+ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 1.25e-5
 
 # Adam specific parameters for Discriminator Optimizer
 # Paper [7] sets momentum for Adam as 0.9 and 0.99.
