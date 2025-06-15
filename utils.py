@@ -209,11 +209,11 @@ def init_wandb(
                     cfg_module.ADVERSARIAL_DISCRIMINATOR_MAIN_LEARNING_RATE
                 )
                 discriminator_opt_config["aux_lr"] = (
-                    cfg_module.ADVERSARIAL_DISCRIMINATOR_AUXILIARY_LEARNING_RATE
+                    cfg_module.ADVERSARIAL_DISCRIMINATOR_AUX_LEARNING_RATE
                 )
             else:
                 discriminator_opt_config["lr"] = (
-                    cfg_module.ADVERSARIAL_DISCRIMINATOR_MAIN_LEARNING_RATE
+                    cfg_module.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE
                 )
             full_config["discriminator_optimizer"] = discriminator_opt_config
         else:

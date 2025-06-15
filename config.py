@@ -299,10 +299,13 @@ ADVERSARIAL_DISCRIMINATOR_WEIGHT_DECAY = (
 ADVERSARIAL_MULTI_LEVEL = True  # Set to True to enable the multi-level approach
 
 # Main adversarial loss weight, based on previous experiments.
-ADVERSARIAL_LAMBDA_ADV_MAIN = 0.002
+# ADVERSARIAL_LAMBDA_ADV_MAIN = 0.002
 
 # Auxiliary adversarial loss weight, using a 5:1 ratio from the paper applied to the user's value.
-ADVERSARIAL_LAMBDA_ADV_AUX = 0.0004  # (0.002 / 5)
+# ADVERSARIAL_LAMBDA_ADV_AUX = 0.0004  # (0.002 / 5)
+
+ADVERSARIAL_LAMBDA_ADV_MAIN = 0.01
+ADVERSARIAL_LAMBDA_ADV_AUX = 0.002
 
 # Learning rates for the two discriminators
 ADVERSARIAL_DISCRIMINATOR_MAIN_LEARNING_RATE = 5e-6
