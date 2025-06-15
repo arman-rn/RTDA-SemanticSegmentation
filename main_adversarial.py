@@ -70,7 +70,6 @@ def main_adversarial():
         default=None,
         help="Path to checkpoint to resume training from. Overrides config.RESUME_CHECKPOINT_PATH.",
     )
-    # Paths can also be overridden if needed
     parser.add_argument(
         "--gta5_path", type=str, default=None, help="Overrides config.GTA5_DATASET_PATH"
     )
@@ -375,6 +374,22 @@ def main_adversarial():
             if "loss_D_total" in avg_losses_dict:
                 log_payload_epoch["train_adv_epoch/avg_loss_D"] = avg_losses_dict[
                     "loss_D_total"
+                ]
+            if "adv_loss_main_G" in avg_losses_dict:
+                log_payload_epoch["train_adv_epoch/avg_loss_adv_main_G"] = (
+                    avg_losses_dict["adv_loss_main_G"]
+                )
+            if "adv_loss_aux_G" in avg_losses_dict:
+                log_payload_epoch["train_adv_epoch/avg_loss_adv_aux_G"] = (
+                    avg_losses_dict["adv_loss_aux_G"]
+                )
+            if "loss_D_main" in avg_losses_dict:
+                log_payload_epoch["train_adv_epoch/avg_loss_D_main"] = avg_losses_dict[
+                    "loss_D_main"
+                ]
+            if "loss_D_aux" in avg_losses_dict:
+                log_payload_epoch["train_adv_epoch/avg_loss_D_aux"] = avg_losses_dict[
+                    "loss_D_aux"
                 ]
             wandb.log(log_payload_epoch, step=global_step)
 

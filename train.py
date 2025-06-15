@@ -443,11 +443,11 @@ def train_one_epoch_adversarial_multi(
     model_D_aux.train()
 
     # Initialize running losses
-    running_loss_seg_G = 0.0
-    running_loss_adv_main_G = 0.0
-    running_loss_adv_aux_G = 0.0
-    running_loss_D_main = 0.0
-    running_loss_D_aux = 0.0
+    running_loss_seg_G = 0.0  # Segmentation loss for Generator
+    running_loss_adv_main_G = 0.0  # Adversarial loss for Generator (to fool Main D)
+    running_loss_adv_aux_G = 0.0  # Adversarial loss for Generator (to fool Aux D)
+    running_loss_D_main = 0.0  # Total loss for Main Discriminator
+    running_loss_D_aux = 0.0  # Total loss for Auxiliary Discriminator
 
     real_label = 1.0
     fake_label = 0.0
