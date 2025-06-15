@@ -2,16 +2,14 @@
 Handles the instantiation and loading of segmentation models (DeepLabV2, BiSeNet).
 """
 
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 from torch import nn
 
-# Import segmentation models (Generator)
 from models.bisenet.build_bisenet import BiSeNet
+from models.bisenet.build_bisenet_multilevel import BiSeNetMultiLevel
 from models.deeplabv2.deeplabv2 import get_deeplab_v2
-
-# Import Discriminator model
-from models.discriminator.discriminator import FCDiscriminator
+from models.discriminator.discriminator import FCDiscriminator, FCDiscriminator_aux
 
 ConfigModule = Any
 
@@ -40,8 +38,10 @@ def get_model(config_obj: ConfigModule) -> nn.Module:
 
     num_classes = config_obj.NUM_CLASSES
     device = config_obj.DEVICE
+    model_name = config_obj.MODEL_NAME
+    is_multi_level = config_obj.ADVERSARIAL_MULTI_LEVEL
 
-    if config_obj.MODEL_NAME == "deeplabv2":
+    if model_name == "deeplabv2":
         print(f"Loading DeepLabV2 model with {num_classes} classes.")
         print(
             f"Using DeepLabV2 pretrained backbone from: {config_obj.DEEPLABV2_PRETRAINED_BACKBONE_PATH}"
@@ -54,50 +54,52 @@ def get_model(config_obj: ConfigModule) -> nn.Module:
             pretrain=True,  # Instructs get_deeplab_v2 to load ImageNet weights
             pretrain_model_path=config_obj.DEEPLABV2_PRETRAINED_BACKBONE_PATH,
         )
-    elif config_obj.MODEL_NAME == "bisenet":
-        print(f"Loading BiSeNet model with {num_classes} classes.")
-        print(f"Using BiSeNet context path: {config_obj.BISENET_CONTEXT_PATH}")
-        # BiSeNet's `build_contextpath` handles loading pretrained ResNet18/101 from torchvision
-        model = BiSeNet(
-            num_classes=num_classes,
-            context_path=config_obj.BISENET_CONTEXT_PATH,  # e.g., 'resnet18'
-        )
-        # BiSeNet's own init_weight() is called within its constructor for non-backbone parts.
+    elif model_name == "bisenet":
+        if is_multi_level:
+            print(
+                "Loading BiSeNetMultiLevel model for multi-level adversarial training."
+            )
+            model = BiSeNetMultiLevel(
+                num_classes=num_classes,
+                context_path=config_obj.BISENET_CONTEXT_PATH,
+            )
+        else:
+            print(f"Loading standard BiSeNet model with {num_classes} classes.")
+            model = BiSeNet(
+                num_classes=num_classes,
+                context_path=config_obj.BISENET_CONTEXT_PATH,
+            )
     else:
         raise ValueError(
-            f"Unsupported MODEL_NAME: '{config_obj.MODEL_NAME}'. Choose 'deeplabv2' or 'bisenet'."
+            f"Unsupported MODEL_NAME: '{model_name}'. Choose 'deeplabv2' or 'bisenet'."
         )
 
     model.to(device)
-    print(f"Model '{config_obj.MODEL_NAME}' moved to device: {device}")
+    print(f"Model '{model_name}' moved to device: {device}")
     return model
 
 
-def get_discriminator(config_obj: ConfigModule) -> Optional[nn.Module]:
+def get_discriminators(
+    config_obj: ConfigModule,
+) -> Tuple[nn.Module, Optional[nn.Module]]:
     """
-    Loads and initializes the discriminator model for adversarial training.
+    Loads and initializes the discriminator(s).
 
-    Args:
-        config_obj: The configuration object (e.g., the imported cfg module)
-                    containing settings like NUM_CLASSES and DEVICE.
-
-    Returns:
-        An initialized FCDiscriminator model (subclass of torch.nn.Module)
-        on the specified device if FCDiscriminator is available, otherwise None.
+    - For single-level, returns (D_main, None).
+    - For multi-level, returns (D_main, D_aux).
     """
-    print("Initializing Discriminator (FCDiscriminator)...")
-    num_classes = (
-        config_obj.NUM_CLASSES
-    )  # Discriminator input channels depend on generator's output classes
+    num_classes = config_obj.NUM_CLASSES
     device = config_obj.DEVICE
+    is_multi_level = getattr(config_obj, "ADVERSARIAL_MULTI_LEVEL", False)
 
-    # Instantiate the FCDiscriminator
-    discriminator = FCDiscriminator(num_classes=num_classes)
-    discriminator.to(device)
+    print("Initializing Main Discriminator (FCDiscriminator)...")
+    d_main = FCDiscriminator(num_classes=num_classes).to(device)
+    print(f"Main Discriminator moved to device: {device}")
 
-    print(
-        f"Discriminator (FCDiscriminator) model initialized with {num_classes} input channels."
-    )
-    print(f"Discriminator moved to device: {device}")
+    d_aux = None
+    if is_multi_level:
+        print("Initializing Auxiliary Discriminator (FCDiscriminator_aux)...")
+        d_aux = FCDiscriminator_aux(num_classes=num_classes).to(device)
+        print(f"Auxiliary Discriminator moved to device: {device}")
 
-    return discriminator
+    return d_main, d_aux

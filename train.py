@@ -404,3 +404,242 @@ def train_one_epoch_adversarial(
     }
 
     return avg_losses_epoch, current_global_step
+
+
+# --- Multi-Level Adversarial Training Function ---
+
+
+def train_one_epoch_adversarial_multi(
+    # --- Generator (Segmentation Model) Components ---
+    model_G: nn.Module,
+    optimizer_G: optim.Optimizer,
+    criterion_seg: nn.Module,
+    train_loader_source: DataLoader,
+    initial_base_lr_G: float,
+    # --- Main Discriminator Components ---
+    model_D_main: nn.Module,
+    optimizer_D_main: optim.Optimizer,
+    # --- Auxiliary Discriminator Components ---
+    model_D_aux: nn.Module,
+    optimizer_D_aux: optim.Optimizer,
+    # --- Common Adversarial Components ---
+    criterion_adv: nn.Module,
+    train_loader_target: InfiniteDataLoader,
+    # --- Common Training Loop Parameters ---
+    device: torch.device,
+    epoch: int,
+    global_step_offset: int,
+    max_iter: int,
+    effective_total_epochs: int,
+    config_module_ref: ConfigModule,
+    scaler: Optional[GradScaler] = None,
+) -> Tuple[Dict[str, float], int]:
+    """
+    Trains the Generator and TWO Discriminators (Main and Auxiliary) for one epoch
+    using a multi-level adversarial domain adaptation strategy with mixed-precision support.
+    """
+    model_G.train()
+    model_D_main.train()
+    model_D_aux.train()
+
+    # Initialize running losses
+    running_loss_seg_G = 0.0
+    running_loss_adv_main_G = 0.0
+    running_loss_adv_aux_G = 0.0
+    running_loss_D_main = 0.0
+    running_loss_D_aux = 0.0
+
+    real_label = 1.0
+    fake_label = 0.0
+
+    progress_bar = tqdm(
+        enumerate(train_loader_source),
+        total=len(train_loader_source),
+        desc=f"Epoch {epoch + 1}/{effective_total_epochs} [Multi-Level Adv. Training]",
+        unit="batch",
+        leave=False,
+    )
+    current_global_step = global_step_offset
+    num_batches_source = len(train_loader_source)
+
+    for batch_idx, (images_s, labels_s) in progress_bar:
+        images_s = images_s.to(device)
+        labels_s = labels_s.to(device).long()
+        images_t, _ = next(train_loader_target)
+        images_t = images_t.to(device)
+
+        # --- Update Learning Rates ---
+        lr_power = config_module_ref.LR_SCHEDULER_POWER
+        current_lr_G = poly_lr_scheduler(
+            optimizer_G, initial_base_lr_G, current_global_step, max_iter, lr_power
+        )
+        lr_D_main = config_module_ref.ADVERSARIAL_DISCRIMINATOR_MAIN_LEARNING_RATE
+        lr_D_aux = config_module_ref.ADVERSARIAL_DISCRIMINATOR_AUX_LEARNING_RATE
+        poly_lr_scheduler(
+            optimizer_D_main, lr_D_main, current_global_step, max_iter, lr_power
+        )
+        poly_lr_scheduler(
+            optimizer_D_aux, lr_D_aux, current_global_step, max_iter, lr_power
+        )
+
+        # --- 1. Train MAIN Discriminator (model_D_main) ---
+        optimizer_D_main.zero_grad(set_to_none=True)
+
+        with torch.autocast(
+            device_type=device.type, dtype=torch.float16, enabled=scaler is not None
+        ):
+            # On source data (real)
+            with torch.no_grad():
+                pred_s_main, _, _, _ = model_G(images_s)
+            d_out_main_s = model_D_main(F.softmax(pred_s_main, dim=1).detach())
+            loss_d_main_real = criterion_adv(
+                d_out_main_s, torch.full_like(d_out_main_s, real_label, device=device)
+            )
+
+            # On target data (fake)
+            with torch.no_grad():
+                pred_t_main, _, _, _ = model_G(images_t)
+            d_out_main_t = model_D_main(F.softmax(pred_t_main, dim=1).detach())
+            loss_d_main_fake = criterion_adv(
+                d_out_main_t, torch.full_like(d_out_main_t, fake_label, device=device)
+            )
+
+            loss_D_main_total = (loss_d_main_real + loss_d_main_fake) * 0.5
+
+        if scaler:
+            scaler.scale(loss_D_main_total).backward()
+            scaler.step(optimizer_D_main)
+        else:
+            loss_D_main_total.backward()
+            optimizer_D_main.step()
+
+        running_loss_D_main += loss_D_main_total.item()
+
+        # --- 2. Train AUXILIARY Discriminator (model_D_aux) ---
+        optimizer_D_aux.zero_grad(set_to_none=True)
+
+        with torch.autocast(
+            device_type=device.type, dtype=torch.float16, enabled=scaler is not None
+        ):
+            # On source data (real) - using intermediate features
+            with torch.no_grad():
+                _, _, _, pred_s_aux = model_G(images_s)
+            d_out_aux_s = model_D_aux(pred_s_aux.detach())
+            loss_d_aux_real = criterion_adv(
+                d_out_aux_s, torch.full_like(d_out_aux_s, real_label, device=device)
+            )
+
+            # On target data (fake) - using intermediate features
+            with torch.no_grad():
+                _, _, _, pred_t_aux = model_G(images_t)
+            d_out_aux_t = model_D_aux(pred_t_aux.detach())
+            loss_d_aux_fake = criterion_adv(
+                d_out_aux_t, torch.full_like(d_out_aux_t, fake_label, device=device)
+            )
+
+            loss_D_aux_total = (loss_d_aux_real + loss_d_aux_fake) * 0.5
+
+        if scaler:
+            scaler.scale(loss_D_aux_total).backward()
+            scaler.step(optimizer_D_aux)
+        else:
+            loss_D_aux_total.backward()
+            optimizer_D_aux.step()
+
+        running_loss_D_aux += loss_D_aux_total.item()
+
+        # --- 3. Train Generator (model_G) ---
+        optimizer_G.zero_grad(set_to_none=True)
+
+        with torch.autocast(
+            device_type=device.type, dtype=torch.float16, enabled=scaler is not None
+        ):
+            # a) Segmentation loss on source data
+            pred_s_main_for_g, _, _, _ = model_G(images_s)
+            loss_seg = criterion_seg(pred_s_main_for_g, labels_s)
+
+            # b) Adversarial losses on target data (fooling both discriminators)
+            pred_t_main_for_g, _, _, pred_t_aux_for_g = model_G(images_t)
+
+            # Fool D_main
+            d_out_main_t_for_g = model_D_main(F.softmax(pred_t_main_for_g, dim=1))
+            loss_adv_main = criterion_adv(
+                d_out_main_t_for_g,
+                torch.full_like(d_out_main_t_for_g, real_label, device=device),
+            )
+
+            # Fool D_aux
+            d_out_aux_t_for_g = model_D_aux(pred_t_aux_for_g)
+            loss_adv_aux = criterion_adv(
+                d_out_aux_t_for_g,
+                torch.full_like(d_out_aux_t_for_g, real_label, device=device),
+            )
+
+            # Total Generator loss
+            lambda_adv_main = config_module_ref.ADVERSARIAL_LAMBDA_ADV_MAIN
+            lambda_adv_aux = config_module_ref.ADVERSARIAL_LAMBDA_ADV_AUX
+            loss_G_total = (
+                loss_seg
+                + (lambda_adv_main * loss_adv_main)
+                + (lambda_adv_aux * loss_adv_aux)
+            )
+
+        if scaler:
+            scaler.scale(loss_G_total).backward()
+            scaler.step(optimizer_G)
+            # A single scaler update is performed after all optimizer steps.
+            scaler.update()
+        else:
+            loss_G_total.backward()
+            optimizer_G.step()
+
+        running_loss_seg_G += loss_seg.item()
+        running_loss_adv_main_G += loss_adv_main.item()
+        running_loss_adv_aux_G += loss_adv_aux.item()
+
+        # --- Logging & Progress Bar ---
+        postfix_dict = {
+            "L_seg": f"{loss_seg.item():.3f}",
+            "L_adv_M": f"{loss_adv_main.item():.3f}",
+            "L_adv_A": f"{loss_adv_aux.item():.3f}",
+            "L_D_M": f"{loss_D_main_total.item():.3f}",
+            "L_D_A": f"{loss_D_aux_total.item():.3f}",
+        }
+        progress_bar.set_postfix(**postfix_dict)
+
+        if wandb.run and (
+            current_global_step % config_module_ref.PRINT_FREQ_BATCH == 0
+        ):
+            wandb.log(
+                {
+                    "train_multi/batch_loss_seg_G": loss_seg.item(),
+                    "train_multi/batch_loss_adv_main_G": loss_adv_main.item(),
+                    "train_multi/batch_loss_adv_aux_G": loss_adv_aux.item(),
+                    "train_multi/batch_loss_D_main": loss_D_main_total.item(),
+                    "train_multi/batch_loss_D_aux": loss_D_aux_total.item(),
+                    "train_multi/lr_G": current_lr_G,
+                },
+                step=current_global_step,
+            )
+
+        current_global_step += 1
+
+    # Calculate average losses for the epoch
+    avg_losses_epoch = {
+        "seg_loss_G": running_loss_seg_G / num_batches_source
+        if num_batches_source > 0
+        else 0,
+        "adv_loss_main_G": running_loss_adv_main_G / num_batches_source
+        if num_batches_source > 0
+        else 0,
+        "adv_loss_aux_G": running_loss_adv_aux_G / num_batches_source
+        if num_batches_source > 0
+        else 0,
+        "loss_D_main": running_loss_D_main / num_batches_source
+        if num_batches_source > 0
+        else 0,
+        "loss_D_aux": running_loss_D_aux / num_batches_source
+        if num_batches_source > 0
+        else 0,
+    }
+    return avg_losses_epoch, current_global_step

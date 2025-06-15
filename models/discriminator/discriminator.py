@@ -84,6 +84,65 @@ class FCDiscriminator(nn.Module):
         return x
 
 
+class FCDiscriminator_aux(nn.Module):
+    """
+    A smaller Fully Convolutional Discriminator for intermediate feature maps.
+    It has fewer downsampling layers to suit smaller spatial input dimensions
+    (e.g., H/8 x W/8 from the BiSeNet Feature Fusion Module).
+    """
+
+    def __init__(self, num_classes: int, ndf: int = 64):
+        """
+        Initializes the auxiliary discriminator.
+
+        Args:
+            num_classes (int): Number of input channels, which corresponds to the
+                               number of channels in the intermediate feature map.
+            ndf (int): Number of discriminator filters in the first convolutional layer.
+        """
+        super(FCDiscriminator_aux, self).__init__()
+
+        # Input is (B, num_classes, H/8, W/8)
+        # Layer 1: -> (B, ndf, H/16, W/16)
+        self.conv1 = nn.Conv2d(num_classes, ndf, kernel_size=4, stride=2, padding=1)
+        self.leaky_relu1 = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+        # Layer 2: -> (B, ndf*2, H/32, W/32)
+        self.conv2 = nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1)
+        self.leaky_relu2 = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+        # Layer 3 (Classifier): -> (B, 1, H/64, W/64)
+        self.classifier = nn.Conv2d(ndf * 2, 1, kernel_size=4, stride=2, padding=1)
+
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        """Initializes weights of the convolutional layers."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.normal_(m.weight.data, 0.0, 0.02)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias.data, 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the auxiliary discriminator.
+
+        Args:
+            x (torch.Tensor): Input tensor, expected to be an intermediate feature map
+                              from the generator. Shape: (B, num_classes, H_in, W_in).
+
+        Returns:
+            torch.Tensor: Output logits map.
+        """
+        x = self.conv1(x)
+        x = self.leaky_relu1(x)
+        x = self.conv2(x)
+        x = self.leaky_relu2(x)
+        x = self.classifier(x)
+        return x
+
+
 if __name__ == "__main__":
     # Example usage:
     num_classes_example = 19  # e.g., Cityscapes

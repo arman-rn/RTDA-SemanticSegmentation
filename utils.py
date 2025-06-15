@@ -416,17 +416,18 @@ def save_checkpoint(state: Dict[str, Any], filepath: str) -> None:
 
 def load_checkpoint(
     filepath: str,
-    model_G: nn.Module,  # Generator model
-    optimizer_G: Optional[optim.Optimizer] = None,  # Optimizer for generator
+    model_G: nn.Module,
+    optimizer_G: Optional[optim.Optimizer] = None,
     scaler: Optional[GradScaler] = None,
     device: Optional[torch.device] = None,
-    # Optional components for adversarial training
-    model_D: Optional[nn.Module] = None,  # Discriminator model
-    optimizer_D: Optional[optim.Optimizer] = None,  # Discriminator optimizer
+    model_D_main: Optional[nn.Module] = None,
+    optimizer_D_main: Optional[optim.Optimizer] = None,
+    model_D_aux: Optional[nn.Module] = None,
+    optimizer_D_aux: Optional[optim.Optimizer] = None,
 ) -> Dict[str, Any]:
     """
     Loads training state from a checkpoint file.
-    Handles both standard and adversarial training checkpoints.
+    Handles standard, single-level, and multi-level adversarial checkpoints.
 
     Args:
         filepath: Path to the checkpoint file.
@@ -434,8 +435,10 @@ def load_checkpoint(
         optimizer_G: The generator optimizer instance to load the state_dict into (optional).
         scaler: The GradScaler instance to load the state_dict into (optional).
         device: The torch.device to map the loaded tensors to. If None, loads to CPU first.
-        model_D: The discriminator model instance (optional, for adversarial).
-        optimizer_D: The discriminator optimizer instance (optional, for adversarial).
+        model_D_main: The discriminator model instance (optional, for adversarial).
+        optimizer_D_main: The discriminator optimizer instance (optional, for adversarial).
+        model_D_aux: The auxiliary discriminator model instance (optional, for adversarial).
+        optimizer_D_aux: The auxiliary discriminator optimizer instance (optional, for adversarial).
 
     Returns:
         A dictionary containing the loaded state, or an empty dictionary if not found.
@@ -444,7 +447,7 @@ def load_checkpoint(
     """
     if not os.path.exists(filepath):
         print(f"Warning: Checkpoint file not found at '{filepath}'. Cannot resume.")
-        return {}  # Return empty dict to indicate no checkpoint was loaded
+        return {}
 
     print(f"Loading checkpoint from '{filepath}'...")
     map_location = device if device else torch.device("cpu")
@@ -460,93 +463,57 @@ def load_checkpoint(
         return {}
 
     # Load Generator (model_G) state
-    # Prioritize new key 'model_G_state_dict', fallback to 'model_state_dict' for backward compatibility
-    g_model_state_key = (
-        "model_G_state_dict"
-        if "model_G_state_dict" in checkpoint
-        else "model_state_dict"
-    )
-    if g_model_state_key in checkpoint:
-        model_G.load_state_dict(checkpoint[g_model_state_key])
-        print(f"Generator ({g_model_state_key}) weights loaded.")
-    else:
-        print(
-            f"Warning: Generator state_dict ('model_G_state_dict' or 'model_state_dict') not found in '{filepath}'."
-        )
+    model_G.load_state_dict(checkpoint["model_G_state_dict"])
+    print("Generator (model_G_state_dict) weights loaded.")
 
     # Load Generator Optimizer (optimizer_G) state
-    if optimizer_G:
-        g_opt_state_key = (
-            "optimizer_G_state_dict"
-            if "optimizer_G_state_dict" in checkpoint
-            else "optimizer_state_dict"
-        )
-        if g_opt_state_key in checkpoint:
-            try:
-                optimizer_G.load_state_dict(checkpoint[g_opt_state_key])
-                if (
-                    device and device.type == "cuda"
-                ):  # Move optimizer states to GPU if needed
-                    for state in optimizer_G.state.values():
-                        for k, v in state.items():
-                            if isinstance(v, torch.Tensor):
-                                state[k] = v.to(device)
-                print(f"Generator Optimizer ({g_opt_state_key}) state loaded.")
-            except Exception as e:
-                print(
-                    f"Warning: Could not load Generator Optimizer state ({g_opt_state_key}): {e}."
-                )
-        else:
-            print(
-                "Warning: Generator Optimizer state_dict ('optimizer_G_state_dict' or 'optimizer_state_dict') not found."
-            )
+    if optimizer_G and "optimizer_G_state_dict" in checkpoint:
+        optimizer_G.load_state_dict(checkpoint["optimizer_G_state_dict"])
+        print("Generator Optimizer (optimizer_G_state_dict) state loaded.")
 
-    # Load Discriminator (model_D) state if model_D is provided and key exists
-    if model_D and "model_D_state_dict" in checkpoint:
-        model_D.load_state_dict(checkpoint["model_D_state_dict"])
-        print("Discriminator (model_D_state_dict) weights loaded.")
-    elif model_D:  # model_D provided but no state in checkpoint
-        print(
-            f"Note: Discriminator model provided, but 'model_D_state_dict' not found in '{filepath}'. Discriminator may start fresh."
-        )
+    # Load Main Discriminator (model_D_main) state
+    main_d_model_key = (
+        "model_D_main_state_dict"
+        if "model_D_main_state_dict" in checkpoint
+        else "model_D_state_dict"
+    )
+    if model_D_main and main_d_model_key in checkpoint:
+        model_D_main.load_state_dict(checkpoint[main_d_model_key])
+        print(f"Main Discriminator ({main_d_model_key}) weights loaded.")
 
-    # Load Discriminator Optimizer (optimizer_D) state if optimizer_D is provided and key exists
-    if optimizer_D and "optimizer_D_state_dict" in checkpoint:
-        try:
-            optimizer_D.load_state_dict(checkpoint["optimizer_D_state_dict"])
-            if device and device.type == "cuda":  # Move optimizer states to GPU
-                for state in optimizer_D.state.values():
-                    for k, v in state.items():
-                        if isinstance(v, torch.Tensor):
-                            state[k] = v.to(device)
-            print("Discriminator Optimizer (optimizer_D_state_dict) state loaded.")
-        except Exception as e:
-            print(f"Warning: Could not load Discriminator Optimizer state: {e}.")
-    elif optimizer_D:  # optimizer_D provided but no state in checkpoint
+    # Load Main Discriminator Optimizer (optimizer_D_main) state
+    main_d_opt_key = (
+        "optimizer_D_main_state_dict"
+        if "optimizer_D_main_state_dict" in checkpoint
+        else "optimizer_D_state_dict"
+    )
+    if optimizer_D_main and main_d_opt_key in checkpoint:
+        optimizer_D_main.load_state_dict(checkpoint[main_d_opt_key])
+        print(f"Main Discriminator Optimizer ({main_d_opt_key}) state loaded.")
+
+    # --- Load Auxiliary Discriminator state if model and key exist ---
+    if model_D_aux and "model_D_aux_state_dict" in checkpoint:
+        model_D_aux.load_state_dict(checkpoint["model_D_aux_state_dict"])
+        print("Auxiliary Discriminator (model_D_aux_state_dict) weights loaded.")
+
+    # --- Load Auxiliary Discriminator Optimizer state ---
+    if optimizer_D_aux and "optimizer_D_aux_state_dict" in checkpoint:
+        optimizer_D_aux.load_state_dict(checkpoint["optimizer_D_aux_state_dict"])
         print(
-            f"Note: Discriminator optimizer provided, but 'optimizer_D_state_dict' not found in '{filepath}'. Optimizer state may be reset."
+            "Auxiliary Discriminator Optimizer (optimizer_D_aux_state_dict) state loaded."
         )
 
     # Load Scaler state
     if scaler and "scaler_state_dict" in checkpoint:
-        try:
-            scaler.load_state_dict(checkpoint["scaler_state_dict"])
-            print("GradScaler state loaded.")
-        except Exception as e:
-            print(
-                f"Warning: Could not load GradScaler state: {e}. Scaler state may be reset."
-            )
+        scaler.load_state_dict(checkpoint["scaler_state_dict"])
+        print("GradScaler state loaded.")
 
-    print("Checkpoint loaded successfully (or attempted).")
-    # Return relevant information for resuming training
+    print("Checkpoint loaded successfully.")
     return {
-        "epoch": checkpoint.get(
-            "epoch", -1
-        ),  # Return -1 if not found, so start_epoch becomes 0
+        "epoch": checkpoint.get("epoch", -1),
         "global_step": checkpoint.get("global_step", 0),
         "best_miou": checkpoint.get("best_miou", 0.0),
         "best_model_per_class_ious": checkpoint.get("best_model_per_class_ious"),
-        # Checkpoint itself is returned implicitly by modifying models/optimizers in-place
     }
 
 

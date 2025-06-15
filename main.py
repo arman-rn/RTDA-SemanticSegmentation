@@ -252,7 +252,7 @@ def main():
 
     # --- DataLoaders ---
     try:
-        train_loader, val_loader = get_loaders(
+        train_loader, val_loader, _ = get_loaders(
             cfg,
             train_dataset_name=cfg.TRAIN_DATASET,
             val_dataset_name=cfg.VAL_DATASET,
@@ -449,7 +449,7 @@ def main():
 
         checkpoint_summary = load_checkpoint(
             filepath=final_eval_model_path,
-            model=model,  # Model instance is updated in-place
+            model_G=model,  # Model instance is updated in-place
             device=cfg.DEVICE,
         )
 
