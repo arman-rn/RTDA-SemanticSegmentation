@@ -599,11 +599,11 @@ def train_one_epoch_adversarial_multi(
 
         # --- Logging & Progress Bar ---
         postfix_dict = {
-            "L_seg": f"{loss_seg.item():.3f}",
-            "L_adv_M": f"{loss_adv_main.item():.3f}",
-            "L_adv_A": f"{loss_adv_aux.item():.3f}",
-            "L_D_M": f"{loss_D_main_total.item():.3f}",
-            "L_D_A": f"{loss_D_aux_total.item():.3f}",
+            "L_seg": f"{loss_seg.item():.3f}",  # Segmentation loss
+            "L_adv_M": f"{loss_adv_main.item():.3f}",  # Adversarial loss for main D
+            "L_adv_A": f"{loss_adv_aux.item():.3f}",  # Adversarial loss for aux D
+            "L_D_M": f"{loss_D_main_total.item():.3f}",  # Loss for main D
+            "L_D_A": f"{loss_D_aux_total.item():.3f}",  # Loss for aux D
         }
         progress_bar.set_postfix(**postfix_dict)
 

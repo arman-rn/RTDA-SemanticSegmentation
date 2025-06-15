@@ -183,17 +183,38 @@ def init_wandb(
             full_config["adversarial_target_split"] = (
                 cfg_module.ADVERSARIAL_TARGET_DATASET_SPLIT
             )
-            full_config["lambda_adv_generator"] = (
-                cfg_module.ADVERSARIAL_LAMBDA_ADV_GENERATOR
-            )
+
+            if cfg_module.ADVERSARIAL_MULTI_LEVEL:
+                full_config["adversarial_multi_level"] = True
+                full_config["adversarial_lambda_main"] = (
+                    cfg_module.ADVERSARIAL_LAMBDA_ADV_MAIN
+                )
+                full_config["adversarial_lambda_aux"] = (
+                    cfg_module.ADVERSARIAL_LAMBDA_ADV_AUX
+                )
+            else:
+                full_config["adversarial_multi_level"] = False
+                full_config["lambda_adv_generator"] = (
+                    cfg_module.ADVERSARIAL_LAMBDA_ADV_GENERATOR
+                )
 
             discriminator_opt_config = {
                 "type": cfg_module.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE,
-                "lr": cfg_module.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
                 "beta1": cfg_module.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA1,
                 "beta2": cfg_module.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA2,
                 "weight_decay": cfg_module.ADVERSARIAL_DISCRIMINATOR_WEIGHT_DECAY,
             }
+            if cfg_module.ADVERSARIAL_MULTI_LEVEL:
+                discriminator_opt_config["main_lr"] = (
+                    cfg_module.ADVERSARIAL_DISCRIMINATOR_MAIN_LEARNING_RATE
+                )
+                discriminator_opt_config["aux_lr"] = (
+                    cfg_module.ADVERSARIAL_DISCRIMINATOR_AUXILIARY_LEARNING_RATE
+                )
+            else:
+                discriminator_opt_config["lr"] = (
+                    cfg_module.ADVERSARIAL_DISCRIMINATOR_MAIN_LEARNING_RATE
+                )
             full_config["discriminator_optimizer"] = discriminator_opt_config
         else:
             full_config["training_mode"] = "vanilla"

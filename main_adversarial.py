@@ -140,14 +140,19 @@ def main_adversarial():
         f"  Target Dataset (Unlabeled): {cfg.ADVERSARIAL_TARGET_DATASET_NAME.upper()} (Split: {cfg.ADVERSARIAL_TARGET_DATASET_SPLIT})"
     )
     print(f"  Validation Dataset: {cfg.VAL_DATASET.upper()}")
-    print(
-        f"  Discriminator Optimizer: {cfg.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE.upper()} with LR: {cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE}"
-    )
+    print(f"  Lambda Adversarial (Generator): {cfg.ADVERSARIAL_LAMBDA_ADV_GENERATOR}")
+
     if is_multi_level:
         print(
-            f"  Discriminator AUX LR:  {cfg.ADVERSARIAL_DISCRIMINATOR_AUX_LEARNING_RATE}"
+            f"Discriminator MAIN LR: {cfg.ADVERSARIAL_DISCRIMINATOR_MAIN_LEARNING_RATE}"
         )
-    print(f"  Lambda Adversarial (Generator): {cfg.ADVERSARIAL_LAMBDA_ADV_GENERATOR}")
+        print(
+            f"Discriminator AUX LR:  {cfg.ADVERSARIAL_DISCRIMINATOR_AUX_LEARNING_RATE}"
+        )
+    else:
+        print(
+            f"Discriminator Optimizer: {cfg.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE.upper()} with LR: {cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE}"
+        )
     print(f"Training for {cfg.TRAIN_EPOCHS} epochs.")
     print(f"Device: {cfg.DEVICE}")
     print(f"Batch Size: {cfg.BATCH_SIZE}")
