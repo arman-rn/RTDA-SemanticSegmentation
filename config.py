@@ -91,7 +91,8 @@ SGD_LEARNING_RATE = 2.5e-4  # As per previous setup for SGD
 SGD_MOMENTUM = 0.9
 
 # Adam specific parameters
-ADAM_LEARNING_RATE = 1e-4  # Typical starting LR for Adam
+# ADAM_LEARNING_RATE = 1e-4  # Typical starting LR for Adam
+ADAM_LEARNING_RATE = 5e-5
 # ADAM_BETA1 = 0.9  # Beta1 parameter for Adam optimizer
 # ADAM_BETA2 = 0.999  # Beta2 parameter for Adam optimizer
 
@@ -274,26 +275,18 @@ ADVERSARIAL_TARGET_DATASET_NAME = "cityscapes"
 # Split of the target dataset to use (typically 'train' for unlabeled images)
 ADVERSARIAL_TARGET_DATASET_SPLIT = "train"
 
-# --- Multi-Level Adversarial Learning Settings ---
-ADVERSARIAL_MULTI_LEVEL = True
-
 # Weight for the generator's adversarial loss component.
 # Paper [7] (Tsai et al. "Learning to Adapt Structured Output Space...") suggests lambda_adv = 0.001
 # for their single-level output space adaptation (see Table 3 and Section 6.1 Parameter Analysis).
 ADVERSARIAL_LAMBDA_ADV_GENERATOR = 0.002
 # ADVERSARIAL_LAMBDA_ADV_GENERATOR = 0.0002 # More Cautious Adaptation, This is useful if the discriminator's feedback is noisy or hurting the segmentation performance.
 
-# Derived by applying a 5:1 ratio to your main lambda
-ADVERSARIAL_LAMBDA_ADV_AUX = 0.0004
-
-# A standard, robust weight for the deep supervision (auxiliary segmentation) loss
-ADVERSARIAL_LAMBDA_SEG_AUX = 0.1
-
 # --- Discriminator Optimizer Settings ---
 # Paper [7] uses Adam for the discriminator.
 ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE = "adam"
 # ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 1e-4  # As per Paper [7] for discriminator.
-ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 2.5e-5
+# ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 2.5e-5
+ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 1.25e-5
 
 # Adam specific parameters for Discriminator Optimizer
 # Paper [7] sets momentum for Adam as 0.9 and 0.99.
