@@ -423,6 +423,8 @@ def load_checkpoint(
     # Optional components for adversarial training
     model_D: Optional[nn.Module] = None,  # Discriminator model
     optimizer_D: Optional[optim.Optimizer] = None,  # Discriminator optimizer
+    model_D_aux: Optional[nn.Module] = None,
+    optimizer_D_aux: Optional[optim.Optimizer] = None,
 ) -> Dict[str, Any]:
     """
     Loads training state from a checkpoint file.
@@ -436,6 +438,8 @@ def load_checkpoint(
         device: The torch.device to map the loaded tensors to. If None, loads to CPU first.
         model_D: The discriminator model instance (optional, for adversarial).
         optimizer_D: The discriminator optimizer instance (optional, for adversarial).
+        model_D_aux: The auxiliary discriminator model instance (optional, for adversarial).
+        optimizer_D_aux: The auxiliary discriminator optimizer instance (optional, for adversarial).
 
     Returns:
         A dictionary containing the loaded state, or an empty dictionary if not found.
@@ -502,30 +506,61 @@ def load_checkpoint(
             )
 
     # Load Discriminator (model_D) state if model_D is provided and key exists
-    if model_D and "model_D_state_dict" in checkpoint:
-        model_D.load_state_dict(checkpoint["model_D_state_dict"])
-        print("Discriminator (model_D_state_dict) weights loaded.")
+    d_main_model_key = (
+        "model_D_main_state_dict"
+        if "model_D_main_state_dict" in checkpoint
+        else "model_D_state_dict"
+    )
+    if model_D and d_main_model_key in checkpoint:
+        model_D.load_state_dict(checkpoint[d_main_model_key])
+        print(f"Discriminator ({d_main_model_key}) weights loaded.")
     elif model_D:  # model_D provided but no state in checkpoint
         print(
-            f"Note: Discriminator model provided, but 'model_D_state_dict' not found in '{filepath}'. Discriminator may start fresh."
+            f"Note: Discriminator model provided, but {d_main_model_key} not found in '{filepath}'. Discriminator may start fresh."
         )
 
     # Load Discriminator Optimizer (optimizer_D) state if optimizer_D is provided and key exists
-    if optimizer_D and "optimizer_D_state_dict" in checkpoint:
+    d_main_opt_key = (
+        "optimizer_D_main_state_dict"
+        if "optimizer_D_main_state_dict" in checkpoint
+        else "optimizer_D_state_dict"
+    )
+    if optimizer_D and d_main_opt_key in checkpoint:
         try:
-            optimizer_D.load_state_dict(checkpoint["optimizer_D_state_dict"])
+            optimizer_D.load_state_dict(checkpoint[d_main_opt_key])
             if device and device.type == "cuda":  # Move optimizer states to GPU
                 for state in optimizer_D.state.values():
                     for k, v in state.items():
                         if isinstance(v, torch.Tensor):
                             state[k] = v.to(device)
-            print("Discriminator Optimizer (optimizer_D_state_dict) state loaded.")
+            print(f"Discriminator Optimizer ({d_main_opt_key}) state loaded.")
         except Exception as e:
             print(f"Warning: Could not load Discriminator Optimizer state: {e}.")
     elif optimizer_D:  # optimizer_D provided but no state in checkpoint
         print(
-            f"Note: Discriminator optimizer provided, but 'optimizer_D_state_dict' not found in '{filepath}'. Optimizer state may be reset."
+            f"Note: Discriminator optimizer provided, but {d_main_opt_key} not found in '{filepath}'. Optimizer state may be reset."
         )
+
+    # --- Load Auxiliary Discriminator (only if it exists and is requested) ---
+    if model_D_aux and "model_D_aux_state_dict" in checkpoint:
+        model_D_aux.load_state_dict(checkpoint["model_D_aux_state_dict"])
+        print("Auxiliary Discriminator (model_D_aux_state_dict) weights loaded.")
+
+    if optimizer_D_aux and "optimizer_D_aux_state_dict" in checkpoint:
+        try:
+            optimizer_D_aux.load_state_dict(checkpoint["optimizer_D_aux_state_dict"])
+            if device and device.type == "cuda":  # Move optimizer states to GPU
+                for state in optimizer_D_aux.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor):
+                            state[k] = v.to(device)
+            print(
+                "Auxiliary Discriminator Optimizer (optimizer_D_aux_state_dict) state loaded."
+            )
+        except Exception as e:
+            print(
+                f"Warning: Could not load Auxiliary Discriminator Optimizer state: {e}."
+            )
 
     # Load Scaler state
     if scaler and "scaler_state_dict" in checkpoint:

@@ -38,6 +38,12 @@ def main_adversarial():
     )
     # Add arguments to override config for generator, epochs, resume, paths etc.
     parser.add_argument(
+        "--multi_level",
+        type=bool,
+        default=None,
+        help="Enable multi-level adversarial training. Overrides config.ADVERSARIAL_MULTI_LEVEL.",
+    )
+    parser.add_argument(
         "--generator_model",
         type=str,
         default=None,
@@ -97,6 +103,8 @@ def main_adversarial():
         cfg.GTA5_DATASET_PATH = args.gta5_path
     if args.cityscapes_path is not None:
         cfg.CITYSCAPES_DATASET_PATH = args.cityscapes_path
+    if args.multi_level is not None:
+        cfg.ADVERSARIAL_MULTI_LEVEL = args.multi_level
 
     # Generator LR override
     if args.generator_lr is not None:
@@ -104,6 +112,9 @@ def main_adversarial():
             cfg.SGD_LEARNING_RATE = args.generator_lr
         elif cfg.OPTIMIZER_TYPE.lower() == "adam":
             cfg.ADAM_LEARNING_RATE = args.generator_lr
+
+    is_multilevel = cfg.ADVERSARIAL_MULTI_LEVEL
+    run_mode_str = "Multi-Level" if is_multilevel else "Single-Level"
 
     # --- Setup Checkpoint Directory (specific for adversarial runs) ---
     # Using MODEL_NAME (generator's name) in the path
@@ -113,7 +124,9 @@ def main_adversarial():
     os.makedirs(cfg.CHECKPOINT_DIR, exist_ok=True)
 
     # --- Log Effective Configuration ---
-    print("--- ADVERSARIAL TRAINING - Effective Configuration ---")
+    print(
+        f"--- {run_mode_str.upper()} ADVERSARIAL TRAINING - Effective Configuration ---"
+    )
     print(f"Generator Model: {cfg.MODEL_NAME.upper()}")
     # Determine Generator LR based on its optimizer type
     current_g_base_lr = 0.0
@@ -133,6 +146,10 @@ def main_adversarial():
     print(
         f"  Discriminator Optimizer: {cfg.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE.upper()} with LR: {cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE}"
     )
+    if cfg.ADVERSARIAL_MULTI_LEVEL:
+        print(f"  Lambda Adv (Main): {cfg.ADVERSARIAL_LAMBDA_ADV_GENERATOR}")
+        print(f"  Lambda Adv (Aux): {cfg.ADVERSARIAL_LAMBDA_ADV_AUX}")
+        print(f"  Lambda Seg (Aux): {cfg.ADVERSARIAL_LAMBDA_SEG_AUX}")
     print(f"  Lambda Adversarial (Generator): {cfg.ADVERSARIAL_LAMBDA_ADV_GENERATOR}")
     print(f"Training for {cfg.TRAIN_EPOCHS} epochs.")
     print(f"Device: {cfg.DEVICE}")
@@ -185,8 +202,14 @@ def main_adversarial():
 
     # --- Models ---
     model_G = get_model(config_obj=cfg)  # Generator (BiSeNet)
-    model_D = get_discriminator(config_obj=cfg)  # Discriminator
-    if model_D is None:
+    model_D_main = get_discriminator(config_obj=cfg)  # Discriminator
+    model_D_aux = None
+
+    if is_multilevel:
+        print("Multi-level mode: Creating Auxiliary Discriminator...")
+        model_D_aux = get_discriminator(config_obj=cfg)
+
+    if model_D_main is None:
         print("CRITICAL ERROR: Discriminator model could not be initialized.")
         if wandb.run:
             wandb.finish(exit_code=1)
@@ -213,8 +236,8 @@ def main_adversarial():
 
     # Discriminator Optimizer
     if cfg.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE.lower() == "adam":
-        optimizer_D = optim.Adam(
-            model_D.parameters(),
+        optimizer_D_main = optim.Adam(
+            model_D_main.parameters(),
             lr=cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
             betas=(
                 cfg.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA1,
@@ -228,6 +251,19 @@ def main_adversarial():
             f"Unsupported discriminator optimizer: {cfg.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE}"
         )
 
+    optimizer_D_aux = None
+
+    if is_multilevel and model_D_aux:
+        optimizer_D_aux = optim.Adam(
+            model_D_aux.parameters(),
+            lr=cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
+            betas=(
+                cfg.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA1,
+                cfg.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA2,
+            ),
+            weight_decay=cfg.ADVERSARIAL_DISCRIMINATOR_WEIGHT_DECAY,
+        )
+        print("Created optimizer for Auxiliary Discriminator.")
     # --- Loss Functions ---
     criterion_seg = nn.CrossEntropyLoss(
         ignore_index=cfg.IGNORE_INDEX
@@ -255,8 +291,10 @@ def main_adversarial():
             optimizer_G=optimizer_G,
             scaler=scaler,
             device=cfg.DEVICE,
-            model_D=model_D,
-            optimizer_D=optimizer_D,  # Pass D components
+            model_D=model_D_main,
+            optimizer_D=optimizer_D_main,
+            model_D_aux=model_D_aux,
+            optimizer_D_aux=optimizer_D_aux,
         )
         if checkpoint_data:
             start_epoch = checkpoint_data.get("epoch", -1) + 1
@@ -283,8 +321,15 @@ def main_adversarial():
             criterion=criterion_seg,
         )
         wandb.watch(
-            model_D, log="all", log_freq=cfg.PRINT_FREQ_BATCH * 10, log_graph=False
+            model_D_main, log="all", log_freq=cfg.PRINT_FREQ_BATCH * 10, log_graph=False
         )  # No criterion for D typically
+        if is_multilevel and model_D_aux:
+            wandb.watch(
+                model_D_aux,
+                log="all",
+                log_freq=cfg.PRINT_FREQ_BATCH * 10,
+                log_graph=False,
+            )
 
     # --- Adversarial Training & Validation Loop ---
     max_iter = cfg.TRAIN_EPOCHS * len(
@@ -300,8 +345,10 @@ def main_adversarial():
             criterion_seg=criterion_seg,
             train_loader_source=source_loader,
             initial_base_lr_G=current_g_base_lr,
-            model_D=model_D,
-            optimizer_D=optimizer_D,
+            model_D_main=model_D_main,
+            optimizer_D_main=optimizer_D_main,
+            model_D_aux=model_D_aux,
+            optimizer_D_aux=optimizer_D_aux,
             criterion_adv=criterion_adv,
             train_loader_target=target_loader_infinite,
             initial_base_lr_D=cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
@@ -316,18 +363,8 @@ def main_adversarial():
 
         if wandb.run:  # Log epoch-level average losses
             log_payload_epoch = {"epoch": epoch + 1}
-            if "seg_loss_G" in avg_losses_dict:
-                log_payload_epoch["train_adv_epoch/avg_loss_seg_G"] = avg_losses_dict[
-                    "seg_loss_G"
-                ]
-            if "adv_loss_G" in avg_losses_dict:
-                log_payload_epoch["train_adv_epoch/avg_loss_adv_G"] = avg_losses_dict[
-                    "adv_loss_G"
-                ]
-            if "loss_D_total" in avg_losses_dict:
-                log_payload_epoch["train_adv_epoch/avg_loss_D"] = avg_losses_dict[
-                    "loss_D_total"
-                ]
+            for key, val in avg_losses_dict.items():
+                log_payload_epoch[f"train_adv_epoch/avg_loss_{key}"] = val
             wandb.log(log_payload_epoch, step=global_step)
 
         # --- Validation (on Generator model_G) ---
@@ -361,10 +398,17 @@ def main_adversarial():
             "global_step": global_step,
             "model_G_state_dict": model_G.state_dict(),
             "optimizer_G_state_dict": optimizer_G.state_dict(),
-            "model_D_state_dict": model_D.state_dict(),  # Save D's state
-            "optimizer_D_state_dict": optimizer_D.state_dict(),  # Save D's optimizer state
+            "model_D_main_state_dict": model_D_main.state_dict(),  # Save D's state
+            "optimizer_D_main_state_dict": optimizer_D_main.state_dict(),  # Save D's optimizer state
             "best_miou": best_miou,  # Overall best mIoU for the generator
         }
+
+        if is_multilevel and model_D_aux and optimizer_D_aux:
+            checkpoint_state["model_D_aux_state_dict"] = model_D_aux.state_dict()
+            checkpoint_state["optimizer_D_aux_state_dict"] = (
+                optimizer_D_aux.state_dict()
+            )
+
         if scaler:
             checkpoint_state["scaler_state_dict"] = scaler.state_dict()
 
@@ -414,7 +458,6 @@ def main_adversarial():
             if loaded_per_class_ious is not None:
                 final_per_class_ious_to_report = loaded_per_class_ious
                 print("Loaded per-class IoUs from the best generator checkpoint.")
-        # ... (rest of the logic for handling missing checkpoint or keys)
     else:
         print(
             f"CRITICAL WARNING: Best checkpoint file '{cfg.BEST_CHECKPOINT_FILENAME}' not found at '{final_eval_model_path}'."
@@ -427,7 +470,7 @@ def main_adversarial():
         "\nCalculating performance metrics (FLOPs, Latency on final generator model state)..."
     )
     perf_metrics = calculate_performance_metrics(
-        model_G,  # Ensure this is the generator
+        model_G,
         cfg.DEVICE,
         cfg.CITYSCAPES_IMG_HEIGHT,
         cfg.CITYSCAPES_IMG_WIDTH,
@@ -440,7 +483,6 @@ def main_adversarial():
     print(
         f"| Best Overall mIoU (Generator) on {cfg.VAL_DATASET.upper()} (%) | {best_miou_for_summary_report * 100:.2f} |"
     )
-    # ... (print other metrics: latency, FLOPs, params for Generator)
     print(
         f"| Latency (ms) @ {cfg.CITYSCAPES_IMG_WIDTH}x{cfg.CITYSCAPES_IMG_HEIGHT} | {perf_metrics.get('mean_latency_ms', -1.0):.2f} +/- {perf_metrics.get('std_latency_ms', -1.0):.2f} |"
     )

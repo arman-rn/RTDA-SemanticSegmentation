@@ -1,5 +1,7 @@
 """
-Handles the instantiation and loading of segmentation models (DeepLabV2, BiSeNet).
+Handles the instantiation and loading of segmentation models (DeepLabV2, BiSeNet)
+and discriminator models for adversarial training.
+This version can select between standard BiSeNet and multi-level BiSeNet.
 """
 
 from typing import Any, Optional
@@ -8,6 +10,7 @@ from torch import nn
 
 # Import segmentation models (Generator)
 from models.bisenet.build_bisenet import BiSeNet
+from models.bisenet.build_bisenet_multilevel import BiSeNetMultiLevel
 from models.deeplabv2.deeplabv2 import get_deeplab_v2
 
 # Import Discriminator model
@@ -25,6 +28,8 @@ def get_model(config_obj: ConfigModule) -> nn.Module:
     - For BiSeNet, it uses `config.BISENET_CONTEXT_PATH`. The BiSeNet's
       `build_contextpath.py` (expected in `models/bisenet/`) handles
       loading pretrained weights for its backbone (e.g., ResNet18 from torchvision).
+      If config_obj.ADVERSARIAL_MULTI_LEVEL is True and the model is bisenet,
+      it loads the BiSeNetMultiLevel model. Otherwise, it loads the standard model.
 
     Args:
         config_obj: The configuration object (e.g., the imported cfg module)
@@ -40,8 +45,9 @@ def get_model(config_obj: ConfigModule) -> nn.Module:
 
     num_classes = config_obj.NUM_CLASSES
     device = config_obj.DEVICE
+    model_name = config_obj.MODEL_NAME
 
-    if config_obj.MODEL_NAME == "deeplabv2":
+    if model_name == "deeplabv2":
         print(f"Loading DeepLabV2 model with {num_classes} classes.")
         print(
             f"Using DeepLabV2 pretrained backbone from: {config_obj.DEEPLABV2_PRETRAINED_BACKBONE_PATH}"
@@ -54,22 +60,32 @@ def get_model(config_obj: ConfigModule) -> nn.Module:
             pretrain=True,  # Instructs get_deeplab_v2 to load ImageNet weights
             pretrain_model_path=config_obj.DEEPLABV2_PRETRAINED_BACKBONE_PATH,
         )
-    elif config_obj.MODEL_NAME == "bisenet":
-        print(f"Loading BiSeNet model with {num_classes} classes.")
-        print(f"Using BiSeNet context path: {config_obj.BISENET_CONTEXT_PATH}")
-        # BiSeNet's `build_contextpath` handles loading pretrained ResNet18/101 from torchvision
-        model = BiSeNet(
-            num_classes=num_classes,
-            context_path=config_obj.BISENET_CONTEXT_PATH,  # e.g., 'resnet18'
-        )
-        # BiSeNet's own init_weight() is called within its constructor for non-backbone parts.
+    elif model_name == "bisenet":
+        is_multilevel = getattr(config_obj, "ADVERSARIAL_MULTI_LEVEL", False)
+
+        if is_multilevel:
+            print(
+                f"Loading BiSeNetMultiLevel (Generator) model with {num_classes} classes."
+            )
+            model = BiSeNetMultiLevel(
+                num_classes=num_classes,
+                context_path=config_obj.BISENET_CONTEXT_PATH,
+            )
+        else:
+            print(
+                f"Loading standard BiSeNet (Generator) model with {num_classes} classes."
+            )
+            model = BiSeNet(
+                num_classes=num_classes,
+                context_path=config_obj.BISENET_CONTEXT_PATH,
+            )
     else:
         raise ValueError(
-            f"Unsupported MODEL_NAME: '{config_obj.MODEL_NAME}'. Choose 'deeplabv2' or 'bisenet'."
+            f"Unsupported MODEL_NAME: '{model_name}'. Choose 'deeplabv2' or 'bisenet'."
         )
 
     model.to(device)
-    print(f"Model '{config_obj.MODEL_NAME}' moved to device: {device}")
+    print(f"Model '{model_name}' moved to device: {device}")
     return model
 
 
