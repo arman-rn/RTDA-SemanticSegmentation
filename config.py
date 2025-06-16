@@ -296,7 +296,7 @@ ADVERSARIAL_DISCRIMINATOR_WEIGHT_DECAY = (
 )
 
 # --- Multi-level Adversarial Settings ---
-ADVERSARIAL_MULTI_LEVEL = True  # Set to True to enable the multi-level approach
+ADVERSARIAL_MULTI_LEVEL = False  # Set to True to enable the multi-level approach
 
 # Main adversarial loss weight, based on previous experiments.
 # ADVERSARIAL_LAMBDA_ADV_MAIN = 0.002
@@ -310,3 +310,10 @@ ADVERSARIAL_LAMBDA_ADV_AUX = 0.002
 # Learning rates for the two discriminators
 ADVERSARIAL_DISCRIMINATOR_MAIN_LEARNING_RATE = 5e-6
 ADVERSARIAL_DISCRIMINATOR_AUX_LEARNING_RATE = 5e-6
+
+# --- Lovasz-Softmax Loss Extension Settings ---
+# Set this to True to run the Lovasz-Softmax extension.
+# This will be checked by our new main_lovasz.py script.
+USE_LOVASZ_LOSS = True
+# Weight for combining the two losses. L_total = L_ce + w * L_lovasz
+LOVASZ_LOSS_WEIGHT = 0.5

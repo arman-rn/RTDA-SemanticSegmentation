@@ -24,8 +24,10 @@ from torch import GradScaler, nn, optim
 
 import config as cfg
 from data_loader import CITYSCAPES_ID_TO_NAME_MAP, get_loaders
+from losses.lovasz_loss import LovaszSoftmax
 from model_loader import get_model
 from train import train_one_epoch
+from train_lovasz import train_one_epoch_lovasz
 from utils import (
     calculate_performance_metrics,
     init_wandb,
@@ -295,8 +297,13 @@ def main():
     else:
         raise ValueError(f"Unsupported optimizer: {cfg.OPTIMIZER_TYPE}")
 
-    # Define the Cross Entropy loss function, ignoring the specified index.
-    criterion = nn.CrossEntropyLoss(ignore_index=cfg.IGNORE_INDEX)
+    # --- Loss Function Setup ---
+    # Instantiate both Cross-Entropy and Lovasz-Softmax losses.
+    criterion_ce = nn.CrossEntropyLoss(ignore_index=cfg.IGNORE_INDEX)
+    criterion_lovasz = None
+    if cfg.USE_LOVASZ_LOSS:
+        criterion_lovasz = LovaszSoftmax(ignore=cfg.IGNORE_INDEX)
+        print("Using combined Cross-Entropy and Lovasz-Softmax loss.")
 
     # Initializes the gradient scaler for mixed-precision training.
     scaler: Optional[GradScaler] = None
@@ -350,19 +357,36 @@ def main():
     for epoch in range(start_epoch, cfg.TRAIN_EPOCHS):  # epoch is 0-indexed
         print(f"\n--- Epoch {epoch + 1}/{cfg.TRAIN_EPOCHS} ---")
 
-        avg_train_loss, global_step = train_one_epoch(
-            model=model,
-            train_loader=train_loader,
-            optimizer=optimizer,
-            criterion=criterion,
-            device=cfg.DEVICE,
-            epoch=epoch,
-            global_step_offset=global_step,
-            max_iter=max_iter,
-            initial_base_lr=current_base_lr,
-            effective_total_epochs=cfg.TRAIN_EPOCHS,
-            scaler=scaler,
-        )
+        if cfg.USE_LOVASZ_LOSS and criterion_lovasz is not None:
+            avg_train_loss, global_step = train_one_epoch_lovasz(
+                model=model,
+                train_loader=train_loader,
+                optimizer=optimizer,
+                criterion_ce=criterion_ce,
+                criterion_lovasz=criterion_lovasz,
+                lovasz_weight=cfg.LOVASZ_LOSS_WEIGHT,
+                device=cfg.DEVICE,
+                epoch=epoch,
+                global_step_offset=global_step,
+                max_iter=max_iter,
+                initial_base_lr=current_base_lr,
+                effective_total_epochs=cfg.TRAIN_EPOCHS,
+                scaler=scaler,
+            )
+        else:
+            avg_train_loss, global_step = train_one_epoch(
+                model=model,
+                train_loader=train_loader,
+                optimizer=optimizer,
+                criterion=criterion_ce,
+                device=cfg.DEVICE,
+                epoch=epoch,
+                global_step_offset=global_step,
+                max_iter=max_iter,
+                initial_base_lr=current_base_lr,
+                effective_total_epochs=cfg.TRAIN_EPOCHS,
+                scaler=scaler,
+            )
         if wandb.run:
             wandb.log(
                 {"train/epoch_loss": avg_train_loss, "epoch": epoch + 1},
@@ -381,7 +405,7 @@ def main():
             current_epoch_miou, avg_val_loss, current_per_class_ious = validate_and_log(
                 model=model,
                 val_loader=val_loader,
-                criterion=criterion,
+                criterion=criterion_ce,
                 device=cfg.DEVICE,
                 epoch=epoch,
                 global_step=global_step,

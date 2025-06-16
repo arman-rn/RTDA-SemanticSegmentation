@@ -17,8 +17,10 @@ from torch import GradScaler, nn, optim
 
 import config as cfg
 from data_loader import CITYSCAPES_ID_TO_NAME_MAP, get_loaders
+from losses.lovasz_loss import LovaszSoftmax
 from model_loader import get_discriminators, get_model
 from train import train_one_epoch_adversarial, train_one_epoch_adversarial_multi
+from train_lovasz import train_one_epoch_adversarial_lovasz
 from utils import (
     calculate_performance_metrics,
     init_wandb,
@@ -251,9 +253,14 @@ def main_adversarial():
         )
 
     # --- Loss Functions ---
-    criterion_seg = nn.CrossEntropyLoss(
+    criterion_seg_ce = nn.CrossEntropyLoss(
         ignore_index=cfg.IGNORE_INDEX
-    )  # For Generator's segmentation task
+    )  # For Generator's segmentation task (Cross-Entropy)
+    criterion_seg_lovasz = None
+    if cfg.USE_LOVASZ_LOSS:
+        criterion_seg_lovasz = LovaszSoftmax(
+            ignore=cfg.IGNORE_INDEX
+        )  # For Generator's segmentation task (Lovasz-Softmax)
     criterion_adv = (
         nn.BCEWithLogitsLoss()
     )  # For adversarial training (D loss, and G's adv loss)
@@ -305,7 +312,7 @@ def main_adversarial():
             log="all",
             log_freq=cfg.PRINT_FREQ_BATCH * 5,
             log_graph=True,
-            criterion=criterion_seg,
+            criterion=criterion_seg_ce,
         )
         wandb.watch(model_D_main, log="all", log_freq=cfg.PRINT_FREQ_BATCH * 10)
         if is_multi_level and model_D_aux is not None:
@@ -323,7 +330,7 @@ def main_adversarial():
             avg_losses_dict, global_step = train_one_epoch_adversarial_multi(
                 model_G=model_G,
                 optimizer_G=optimizer_G,
-                criterion_seg=criterion_seg,
+                criterion_seg=criterion_seg_ce,
                 train_loader_source=source_loader,
                 initial_base_lr_G=current_g_base_lr,
                 model_D_main=model_D_main,
@@ -340,11 +347,33 @@ def main_adversarial():
                 config_module_ref=cfg,
                 scaler=scaler,
             )
+        elif cfg.USE_LOVASZ_LOSS and criterion_seg_lovasz is not None:
+            avg_losses_dict, global_step = train_one_epoch_adversarial_lovasz(
+                model_G=model_G,
+                optimizer_G=optimizer_G,
+                criterion_seg_ce=criterion_seg_ce,
+                criterion_seg_lovasz=criterion_seg_lovasz,
+                lovasz_weight=cfg.LOVASZ_LOSS_WEIGHT,
+                train_loader_source=source_loader,
+                initial_base_lr_G=current_g_base_lr,
+                model_D=model_D_main,
+                optimizer_D=optimizer_D_main,
+                criterion_adv=criterion_adv,
+                train_loader_target=target_loader_infinite,
+                initial_base_lr_D=cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
+                device=cfg.DEVICE,
+                epoch=epoch,
+                global_step_offset=global_step,
+                max_iter=max_iter,
+                effective_total_epochs=cfg.TRAIN_EPOCHS,
+                config_module_ref=cfg,
+                scaler=scaler,
+            )
         else:
             avg_losses_dict, global_step = train_one_epoch_adversarial(
                 model_G=model_G,
                 optimizer_G=optimizer_G,
-                criterion_seg=criterion_seg,
+                criterion_seg=criterion_seg_ce,
                 train_loader_source=source_loader,
                 initial_base_lr_G=current_g_base_lr,
                 model_D=model_D_main,
@@ -391,6 +420,15 @@ def main_adversarial():
                 log_payload_epoch["train_adv_epoch/avg_loss_D_aux"] = avg_losses_dict[
                     "loss_D_aux"
                 ]
+            if "seg_loss_lovasz_G" in avg_losses_dict:
+                log_payload_epoch["train_adv_epoch/avg_loss_seg_lov_G"] = (
+                    avg_losses_dict["seg_loss_lovasz_G"]
+                )
+            if "seg_loss_ce_G" in avg_losses_dict:
+                log_payload_epoch["train_adv_epoch/avg_loss_seg_ce_G"] = (
+                    avg_losses_dict["seg_loss_ce_G"]
+                )
+
             wandb.log(log_payload_epoch, step=global_step)
 
         # --- Validation (on Generator model_G) ---
@@ -403,7 +441,7 @@ def main_adversarial():
             current_epoch_miou, avg_val_loss, current_per_class_ious = validate_and_log(
                 model=model_G,  # Validate generator
                 val_loader=val_loader,
-                criterion=criterion_seg,  # Use segmentation loss for validation
+                criterion=criterion_seg_ce,  # Use segmentation loss for validation
                 device=cfg.DEVICE,
                 epoch=epoch,
                 global_step=global_step,
