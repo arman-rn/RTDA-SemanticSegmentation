@@ -269,8 +269,11 @@ def log_segmentation_to_wandb(
 
     for i in range(num_to_log):
         # Denormalize image for visualization
-        img_to_log: torch.Tensor = (images[i].clone() * std_tensor) + mean_tensor
-        img_to_log = img_to_log.clamp(0, 1)
+        img_denorm_4d = (images[i].clone() * std_tensor) + mean_tensor
+        img_denorm_4d = img_denorm_4d.clamp(0, 1)
+
+        # Squeeze the extra batch dimension to get the required 3D tensor (C, H, W)
+        img_to_log = img_denorm_4d.squeeze(0)
 
         # Prepare 2D numpy arrays for mask_data from the label ID tensors
         true_mask_np_2d: np.ndarray = true_masks[i].cpu().numpy()
