@@ -236,130 +236,78 @@ def train_one_epoch_adversarial(
             optimizer_D, initial_base_lr_D, current_global_step, max_iter, lr_power
         )
 
-        # --- 1. Train Discriminator (model_D) ---
+        # --- 1. EFFICIENT FORWARD PASS for GENERATOR ---
+        # Maximize log(D(G_s(x_s))) + log(1 - D(G_t(x_t)))
+        # D wants to assign "real_label" to source and "fake_label" to target
+        with torch.autocast(
+            device_type=device.type, dtype=torch.float16, enabled=scaler is not None
+        ):
+            # For single-level, we only need the main prediction
+            # The model output is a tuple, so we take the first element [0]
+            pred_s_logits = model_G(images_s)[0]
+            pred_t_logits = model_G(images_t)[0]
+
+        # --- 2. Train Discriminator (model_D) ---
         # Maximize log(D(G_s(x_s))) + log(1 - D(G_t(x_t)))
         # D wants to assign "real_label" to source and "fake_label" to target
         optimizer_D.zero_grad(set_to_none=True)
 
-        # On source data (real)
-        with torch.no_grad():  # Don't track gradients for G during D's source pass
-            pred_s_logits_G_detached = (
-                model_G(images_s)[0]
-                if isinstance(model_G(images_s), tuple)
-                else model_G(images_s)
-            )
-
-        # Discriminator takes probability maps as input [cite: 76, 86]
-        input_d_source = F.softmax(pred_s_logits_G_detached, dim=1).detach()
-
-        if scaler:
-            with torch.autocast(
-                device_type=device.type, dtype=torch.float16, enabled=True
-            ):
-                d_out_source = model_D(input_d_source)
-                loss_d_real = criterion_adv(
-                    d_out_source,
-                    torch.full_like(d_out_source, real_label, device=device),
-                )
-        else:
-            d_out_source = model_D(input_d_source)
+        with torch.autocast(
+            device_type=device.type, dtype=torch.float16, enabled=scaler is not None
+        ):
+            # On source data (real), using detached logits
+            d_out_source = model_D(F.softmax(pred_s_logits, dim=1).detach())
             loss_d_real = criterion_adv(
                 d_out_source, torch.full_like(d_out_source, real_label, device=device)
             )
 
-        # On target data (fake)
-        with torch.no_grad():  # Don't track gradients for G during D's target pass
-            pred_t_logits_G_detached = (
-                model_G(images_t)[0]
-                if isinstance(model_G(images_t), tuple)
-                else model_G(images_t)
-            )
-        input_d_target = F.softmax(pred_t_logits_G_detached, dim=1).detach()
-
-        if scaler:
-            with torch.autocast(
-                device_type=device.type, dtype=torch.float16, enabled=True
-            ):
-                d_out_target = model_D(input_d_target)
-                loss_d_fake = criterion_adv(
-                    d_out_target,
-                    torch.full_like(d_out_target, fake_label, device=device),
-                )
-        else:
-            d_out_target = model_D(input_d_target)
+            # On target data (fake), using detached logits
+            d_out_target = model_D(F.softmax(pred_t_logits, dim=1).detach())
             loss_d_fake = criterion_adv(
                 d_out_target, torch.full_like(d_out_target, fake_label, device=device)
             )
 
-        loss_D = (loss_d_real + loss_d_fake) * 0.5
+            loss_D = (loss_d_real + loss_d_fake) * 0.5
+
         if scaler:
             scaler.scale(loss_D).backward()
             scaler.step(optimizer_D)
-            # scaler.update() will be called after G's step
         else:
             loss_D.backward()
             optimizer_D.step()
+
         running_loss_D_total += loss_D.item()
 
-        # --- 2. Train Generator (model_G) ---
+        # --- 3. Train Generator (model_G) ---
         # Maximize log(D(G_t(x_t))) (to fool D) + Minimize SegLoss(G_s(x_s), y_s)
         optimizer_G.zero_grad(set_to_none=True)
 
-        # a) Segmentation loss on source data
-        if scaler:
-            with torch.autocast(
-                device_type=device.type, dtype=torch.float16, enabled=True
-            ):
-                pred_s_logits_G = (
-                    model_G(images_s)[0]
-                    if isinstance(model_G(images_s), tuple)
-                    else model_G(images_s)
-                )
-                loss_seg = criterion_seg(pred_s_logits_G, labels_s)
-        else:
-            pred_s_logits_G = (
-                model_G(images_s)[0]
-                if isinstance(model_G(images_s), tuple)
-                else model_G(images_s)
-            )
-            loss_seg = criterion_seg(pred_s_logits_G, labels_s)
-        running_loss_seg_G += loss_seg.item()
+        with torch.autocast(
+            device_type=device.type, dtype=torch.float16, enabled=scaler is not None
+        ):
+            # a) Segmentation loss on source data (reusing pred_s_logits)
+            loss_seg = criterion_seg(pred_s_logits, labels_s)
 
-        # b) Adversarial loss on target data (G wants D to predict target as "real_label")
-        # [cite: 89] (describes G's adv loss as maximizing D(P_t) being considered source)
-        pred_t_logits_G_for_adv = (
-            model_G(images_t)[0]
-            if isinstance(model_G(images_t), tuple)
-            else model_G(images_t)
-        )
-        input_d_target_for_g = F.softmax(pred_t_logits_G_for_adv, dim=1)
-
-        if scaler:
-            with torch.autocast(
-                device_type=device.type, dtype=torch.float16, enabled=True
-            ):
-                d_out_target_for_g = model_D(input_d_target_for_g)
-                loss_adv = criterion_adv(
-                    d_out_target_for_g,
-                    torch.full_like(d_out_target_for_g, real_label, device=device),
-                )
-        else:
-            d_out_target_for_g = model_D(input_d_target_for_g)
+            # b) Adversarial loss on target data (G wants D to predict target as "real_label")
+            # [cite: 89] (describes G's adv loss as maximizing D(P_t) being considered source)
+            d_out_target_for_g = model_D(F.softmax(pred_t_logits, dim=1))
             loss_adv = criterion_adv(
                 d_out_target_for_g,
                 torch.full_like(d_out_target_for_g, real_label, device=device),
             )
-        running_loss_adv_G += loss_adv.item()
 
-        # Total Generator loss
-        lambda_adv = config_module_ref.ADVERSARIAL_LAMBDA_ADV_GENERATOR
-        loss_G_total = loss_seg + lambda_adv * loss_adv
+            lambda_adv = config_module_ref.ADVERSARIAL_LAMBDA_ADV_GENERATOR
+            loss_G_total = loss_seg + lambda_adv * loss_adv
+
         if scaler:
             scaler.scale(loss_G_total).backward()
             scaler.step(optimizer_G)
         else:
             loss_G_total.backward()
             optimizer_G.step()
+
+        running_loss_seg_G += loss_seg.item()
+        running_loss_adv_G += loss_adv.item()
 
         # Single scaler update after both G and D steps
         if scaler:
@@ -482,23 +430,31 @@ def train_one_epoch_adversarial_multi(
             optimizer_D_aux, lr_D_aux, current_global_step, max_iter, lr_power
         )
 
-        # --- 1. Train MAIN Discriminator (model_D_main) ---
+        # --- 1. EFFICIENT FORWARD PASS for GENERATOR ---
+        # Perform one forward pass for source and one for target.
+        # Gradients are enabled here to build the graph for the later generator update.
+        with torch.autocast(
+            device_type=device.type, dtype=torch.float16, enabled=scaler is not None
+        ):
+            # The model returns: (final_output, sup1, sup2, intermediate_features)
+            pred_s_main, _, _, pred_s_aux = model_G(images_s)
+            pred_t_main, _, _, pred_t_aux = model_G(images_t)
+
+        # --- 2. Train MAIN Discriminator (model_D_main) ---
+        # We use the results from the generator pass above, but DETACH them
+        # so that gradients do not flow back to the generator during this step.
         optimizer_D_main.zero_grad(set_to_none=True)
 
         with torch.autocast(
             device_type=device.type, dtype=torch.float16, enabled=scaler is not None
         ):
             # On source data (real)
-            with torch.no_grad():
-                pred_s_main, _, _, _ = model_G(images_s)
             d_out_main_s = model_D_main(F.softmax(pred_s_main, dim=1).detach())
             loss_d_main_real = criterion_adv(
                 d_out_main_s, torch.full_like(d_out_main_s, real_label, device=device)
             )
 
             # On target data (fake)
-            with torch.no_grad():
-                pred_t_main, _, _, _ = model_G(images_t)
             d_out_main_t = model_D_main(F.softmax(pred_t_main, dim=1).detach())
             loss_d_main_fake = criterion_adv(
                 d_out_main_t, torch.full_like(d_out_main_t, fake_label, device=device)
@@ -515,23 +471,20 @@ def train_one_epoch_adversarial_multi(
 
         running_loss_D_main += loss_D_main_total.item()
 
-        # --- 2. Train AUXILIARY Discriminator (model_D_aux) ---
+        # --- 3. Train AUXILIARY Discriminator (model_D_aux) ---
+        # Again, we use DETACHED intermediate features from the initial generator pass.
         optimizer_D_aux.zero_grad(set_to_none=True)
 
         with torch.autocast(
             device_type=device.type, dtype=torch.float16, enabled=scaler is not None
         ):
             # On source data (real) - using intermediate features
-            with torch.no_grad():
-                _, _, _, pred_s_aux = model_G(images_s)
             d_out_aux_s = model_D_aux(pred_s_aux.detach())
             loss_d_aux_real = criterion_adv(
                 d_out_aux_s, torch.full_like(d_out_aux_s, real_label, device=device)
             )
 
             # On target data (fake) - using intermediate features
-            with torch.no_grad():
-                _, _, _, pred_t_aux = model_G(images_t)
             d_out_aux_t = model_D_aux(pred_t_aux.detach())
             loss_d_aux_fake = criterion_adv(
                 d_out_aux_t, torch.full_like(d_out_aux_t, fake_label, device=device)
@@ -548,28 +501,26 @@ def train_one_epoch_adversarial_multi(
 
         running_loss_D_aux += loss_D_aux_total.item()
 
-        # --- 3. Train Generator (model_G) ---
+        # --- 4. Train Generator (model_G) ---
+        # Now, we use the results from the initial forward pass WITHOUT detaching them.
+        # This allows gradients from the segmentation and adversarial losses to flow back.
         optimizer_G.zero_grad(set_to_none=True)
 
         with torch.autocast(
             device_type=device.type, dtype=torch.float16, enabled=scaler is not None
         ):
-            # a) Segmentation loss on source data
-            pred_s_main_for_g, _, _, _ = model_G(images_s)
-            loss_seg = criterion_seg(pred_s_main_for_g, labels_s)
+            # a) Segmentation loss on source data (using pred_s_main)
+            loss_seg = criterion_seg(pred_s_main, labels_s)
 
-            # b) Adversarial losses on target data (fooling both discriminators)
-            pred_t_main_for_g, _, _, pred_t_aux_for_g = model_G(images_t)
-
-            # Fool D_main
-            d_out_main_t_for_g = model_D_main(F.softmax(pred_t_main_for_g, dim=1))
+            # b) Adversarial loss on target data (to fool D_main, using pred_t_main)
+            d_out_main_t_for_g = model_D_main(F.softmax(pred_t_main, dim=1))
             loss_adv_main = criterion_adv(
                 d_out_main_t_for_g,
                 torch.full_like(d_out_main_t_for_g, real_label, device=device),
             )
 
-            # Fool D_aux
-            d_out_aux_t_for_g = model_D_aux(pred_t_aux_for_g)
+            # c) Adversarial loss on target data (to fool D_aux, using pred_t_aux)
+            d_out_aux_t_for_g = model_D_aux(pred_t_aux)
             loss_adv_aux = criterion_adv(
                 d_out_aux_t_for_g,
                 torch.full_like(d_out_aux_t_for_g, real_label, device=device),
