@@ -363,7 +363,7 @@ def main():
         print(f"\n--- Epoch {epoch + 1}/{cfg.TRAIN_EPOCHS} ---")
 
         if cfg.USE_LOVASZ_LOSS and criterion_lovasz is not None:
-            avg_train_loss, global_step = train_one_epoch_lovasz(
+            avg_losses_dict, global_step = train_one_epoch_lovasz(
                 model=model,
                 train_loader=train_loader,
                 optimizer=optimizer,
@@ -378,6 +378,18 @@ def main():
                 effective_total_epochs=cfg.TRAIN_EPOCHS,
                 scaler=scaler,
             )
+            avg_train_loss = avg_losses_dict.get("total", 0.0)
+            # Log epoch-level losses to W&B
+            if wandb.run:
+                wandb.log(
+                    {
+                        "train/loss_total": avg_losses_dict["total"],
+                        "train/loss_ce": avg_losses_dict["ce"],
+                        "train/loss_lovasz": avg_losses_dict["lovasz"],
+                        "epoch": epoch + 1,
+                    },
+                    step=global_step,
+                )
         else:
             avg_train_loss, global_step = train_one_epoch(
                 model=model,
@@ -392,11 +404,11 @@ def main():
                 effective_total_epochs=cfg.TRAIN_EPOCHS,
                 scaler=scaler,
             )
-        if wandb.run:
-            wandb.log(
-                {"train/epoch_loss": avg_train_loss, "epoch": epoch + 1},
-                step=global_step,
-            )
+            if wandb.run:
+                wandb.log(
+                    {"train/epoch_loss": avg_train_loss, "epoch": epoch + 1},
+                    step=global_step,
+                )
 
         # --- Validation ---
         current_epoch_miou = 0.0  # mIoU specifically for this epoch's validation

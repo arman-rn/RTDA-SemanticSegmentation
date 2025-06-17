@@ -41,18 +41,20 @@ def train_one_epoch_lovasz(
     initial_base_lr: float,
     effective_total_epochs: int,
     scaler: Optional[GradScaler] = None,
-) -> Tuple[float, int]:
+) -> Tuple[Dict[str, float], int]:
     """
     Trains the model for one epoch using a combined Cross-Entropy and Lovasz-Softmax loss.
     """
 
     model.train()  # Sets the model to training mode (enables dropout, updates batch norm statistics if they weren't frozen).
-    running_loss = 0.0  # Initialize running loss for the epoch
+    running_loss_total = 0.0
+    running_loss_ce = 0.0
+    running_loss_lovasz = 0.0
 
     # Progress bar for iterating over batches
     progress_bar = tqdm(
         train_loader,
-        desc=f"Epoch {epoch + 1}/{effective_total_epochs} [Training]",  # Use effective_total_epochs
+        desc=f"Epoch {epoch + 1}/{effective_total_epochs} [Training w/ Lovasz]",  # Use effective_total_epochs
         unit="batch",
         leave=False,  # Keep the bar from staying after completion if nested
     )
@@ -101,10 +103,10 @@ def train_one_epoch_lovasz(
                 loss_lovasz = criterion_lovasz(probas, labels)
 
                 # c) Combine the losses using the weight from the config
-                loss = loss_ce + lovasz_weight * loss_lovasz
+                loss_total = loss_ce + lovasz_weight * loss_lovasz
 
             # Scale the loss (for FP16 stability) and computes gradients.
-            scaler.scale(loss).backward()
+            scaler.scale(loss_total).backward()
             # Unscale gradients and calls optimizer.step().
             scaler.step(optimizer)
             # Updates the scaler for the next iteration.
@@ -123,16 +125,23 @@ def train_one_epoch_lovasz(
             loss_lovasz = criterion_lovasz(probas, labels)
 
             # c) Combine the losses using the weight from the config
-            loss = loss_ce + lovasz_weight * loss_lovasz
+            loss_total = loss_ce + lovasz_weight * loss_lovasz
 
-            loss.backward()  # Compute gradients
+            loss_total.backward()  # Compute gradients
             optimizer.step()  # Update weights
 
-        # Accumulate the batch loss.
-        running_loss += loss.item()
+        # --- Accumulate each loss component ---
+        running_loss_total += loss_total.item()
+        running_loss_ce += loss_ce.item()
+        running_loss_lovasz += loss_lovasz.item()
 
         # Update the tqdm progress bar with current loss and LR.
-        progress_bar.set_postfix(loss=f"{loss.item():.4f}", lr=f"{current_lr:.2e}")
+        progress_bar.set_postfix(
+            loss=f"{loss_total.item():.4f}",
+            ce=f"{loss_ce.item():.4f}",
+            lovasz=f"{loss_lovasz.item():.4f}",
+            lr=f"{current_lr:.2e}",
+        )
 
         # Log batch loss and LR to W&B periodically, using current_global_step as the x-axis.
         if wandb.run and (
@@ -141,9 +150,9 @@ def train_one_epoch_lovasz(
         ):
             wandb.log(
                 {
-                    "train/batch_loss_total": loss.item(),
-                    "train/batch_loss_ce": loss_ce.item(),
-                    "train/batch_loss_lovasz": loss_lovasz.item(),
+                    "train_batch/loss_total": loss_total.item(),
+                    "train_batch/loss_ce": loss_ce.item(),
+                    "train_batch/loss_lovasz": loss_lovasz.item(),
                     "train/learning_rate": current_lr,
                 },
                 step=current_global_step,
@@ -151,8 +160,14 @@ def train_one_epoch_lovasz(
 
         current_global_step += 1
 
-    avg_epoch_loss = running_loss / len(train_loader) if len(train_loader) > 0 else 0
-    return avg_epoch_loss, current_global_step
+    # --- Calculate average for each loss component ---
+    num_batches = len(train_loader)
+    avg_losses_epoch = {
+        "total": running_loss_total / num_batches if num_batches > 0 else 0,
+        "ce": running_loss_ce / num_batches if num_batches > 0 else 0,
+        "lovasz": running_loss_lovasz / num_batches if num_batches > 0 else 0,
+    }
+    return avg_losses_epoch, current_global_step
 
 
 def train_one_epoch_adversarial_lovasz(
@@ -230,7 +245,6 @@ def train_one_epoch_adversarial_lovasz(
             pred_t_logits = model_G(images_t)[0]
 
         # --- 1. Train Discriminator (model_D) ---
-        # This part is unchanged. D's job is still to distinguish source from target.
         optimizer_D.zero_grad(set_to_none=True)
         with torch.autocast(
             device_type=device.type, dtype=torch.float16, enabled=scaler is not None
@@ -253,24 +267,21 @@ def train_one_epoch_adversarial_lovasz(
         running_loss_D_total += loss_D.item()
 
         # --- 2. Train Generator (model_G) ---
-        # The generator's loss now has three parts: CE loss, Lovasz loss, and Adversarial loss.
         optimizer_G.zero_grad(set_to_none=True)
         with torch.autocast(
             device_type=device.type, dtype=torch.float16, enabled=scaler is not None
         ):
-            # a) Adversarial loss on target data (to fool D) - This is unchanged
+            # a) Adversarial loss
             d_out_target_for_g = model_D(F.softmax(pred_t_logits, dim=1))
             loss_adv = criterion_adv(
                 d_out_target_for_g,
                 torch.full_like(d_out_target_for_g, real_label, device=device),
             )
-
-            # b) Combined Segmentation loss on source data
+            # b) Combined Segmentation loss
             loss_seg_ce = criterion_seg_ce(pred_s_logits, labels_s)
             probas_s = F.softmax(pred_s_logits, dim=1)
             loss_seg_lovasz = criterion_seg_lovasz(probas_s, labels_s)
-
-            # c) Final combined loss for the Generator
+            # c) Final combined loss
             lambda_adv = config_module_ref.ADVERSARIAL_LAMBDA_ADV_GENERATOR
             loss_G_total = (
                 loss_seg_ce
@@ -294,6 +305,7 @@ def train_one_epoch_adversarial_lovasz(
             scaler.update()
 
         postfix_dict = {
+            "L_total_G": f"{loss_G_total.item():.3f}",
             "L_ce_G": f"{loss_seg_ce.item():.3f}",
             "L_lov_G": f"{loss_seg_lovasz.item():.3f}",
             "L_adv_G": f"{loss_adv.item():.3f}",
