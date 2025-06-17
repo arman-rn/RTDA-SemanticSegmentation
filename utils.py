@@ -649,8 +649,12 @@ def log_best_model_predictions(
 
         # --- Prepare for logging ---
         # Denormalize image for visualization
-        img_denorm = (image.squeeze(0).clone() * std_tensor) + mean_tensor
-        img_denorm = img_denorm.clamp(0, 1)
+        img_to_denorm = image.squeeze(0).clone()  # Shape (C, H, W)
+        # Broadcasting std_tensor (1,C,1,1) makes the result 4D
+        img_denorm_4d = (img_to_denorm * std_tensor) + mean_tensor
+        img_denorm_4d = img_denorm_4d.clamp(0, 1)
+        # *** FIX: Squeeze the result back to 3D for wandb ***
+        img_denorm_3d = img_denorm_4d.squeeze(0)
 
         # Get 2D numpy arrays for W&B masks
         true_mask_np = true_mask.squeeze(0).cpu().numpy()
@@ -658,7 +662,7 @@ def log_best_model_predictions(
 
         # Create wandb.Image object
         wandb_image = wandb.Image(
-            img_denorm,
+            img_denorm_3d,  # Pass the corrected 3D tensor
             masks={
                 "ground_truth": {
                     "mask_data": true_mask_np,
@@ -678,5 +682,4 @@ def log_best_model_predictions(
         wandb.log({"final_best_model_predictions": images_to_log})
         print("Finished logging sample predictions.")
     else:
-        print("Could not retrieve any images from validation loader to log.")
         print("Could not retrieve any images from validation loader to log.")
