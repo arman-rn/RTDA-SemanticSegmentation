@@ -598,7 +598,7 @@ def main_adversarial():
             val_loader=val_loader,
             device=cfg.DEVICE,
             config_module_ref=cfg,
-            num_images=5,
+            num_images=6,
         )
         wandb.finish()
 

@@ -605,7 +605,7 @@ def main():
             val_loader=val_loader,
             device=cfg.DEVICE,
             config_module_ref=cfg,
-            num_images=5,
+            num_images=6,
         )
         flop_table_str = perf_metrics.get("flop_table", "FLOPs table not calculated.")
         if isinstance(flop_table_str, str) and "Error" not in flop_table_str:
