@@ -24,7 +24,7 @@ from train_lovasz import train_one_epoch_adversarial_lovasz
 from utils import (
     calculate_performance_metrics,
     init_wandb,
-    load_checkpoint,
+    load_adversarial_checkpoint,
     save_checkpoint,
     set_seeds,
 )
@@ -278,17 +278,18 @@ def main_adversarial():
 
     if cfg.RESUME_CHECKPOINT_PATH and os.path.exists(cfg.RESUME_CHECKPOINT_PATH):
         print(f"Attempting to resume from checkpoint: {cfg.RESUME_CHECKPOINT_PATH}")
-        checkpoint_data = load_checkpoint(
+        checkpoint_data = load_adversarial_checkpoint(
             filepath=cfg.RESUME_CHECKPOINT_PATH,
             model_G=model_G,
-            optimizer_G=optimizer_G,
             model_D_main=model_D_main,
+            model_D_aux=model_D_aux,
+            optimizer_G=optimizer_G,
             optimizer_D_main=optimizer_D_main,
+            optimizer_D_aux=optimizer_D_aux,
             scaler=scaler,
             device=cfg.DEVICE,
-            model_D_aux=model_D_aux,
-            optimizer_D_aux=optimizer_D_aux,
         )
+
         if checkpoint_data:
             start_epoch = checkpoint_data.get("epoch", -1) + 1
             global_step = checkpoint_data.get("global_step", 0)
@@ -511,9 +512,11 @@ def main_adversarial():
             f"Loading best generator model from {final_eval_model_path} for final evaluation..."
         )
         # Load only generator for final eval on val set. model_G is updated in-place.
-        checkpoint_summary = load_checkpoint(
+        checkpoint_summary = load_adversarial_checkpoint(
             filepath=final_eval_model_path,
-            model_G=model_G,
+            model_G=model_G,  # The generator model to load into
+            model_D_main=model_D_main,  # Pass discriminator models, though they won't be used
+            model_D_aux=model_D_aux,
             device=cfg.DEVICE,
         )
         if checkpoint_summary:

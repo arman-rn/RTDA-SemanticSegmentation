@@ -31,7 +31,7 @@ from train_lovasz import train_one_epoch_lovasz
 from utils import (
     calculate_performance_metrics,
     init_wandb,
-    load_checkpoint,
+    load_vanilla_checkpoint,
     save_checkpoint,
     set_seeds,
 )
@@ -324,8 +324,12 @@ def main():
 
     if checkpoint_to_resume_from and os.path.exists(checkpoint_to_resume_from):
         print(f"Attempting to resume from checkpoint: {checkpoint_to_resume_from}")
-        checkpoint_data = load_checkpoint(
-            checkpoint_to_resume_from, model, optimizer, scaler, cfg.DEVICE
+        checkpoint_data = load_vanilla_checkpoint(
+            filepath=checkpoint_to_resume_from,
+            model=model,
+            optimizer=optimizer,
+            scaler=scaler,
+            device=cfg.DEVICE,
         )
         if checkpoint_data:  # If checkpoint was successfully loaded
             start_epoch = (
@@ -471,9 +475,9 @@ def main():
             f"Loading best model from {final_eval_model_path} for final evaluation..."
         )
 
-        checkpoint_summary = load_checkpoint(
+        checkpoint_summary = load_vanilla_checkpoint(
             filepath=final_eval_model_path,
-            model_G=model,  # Model instance is updated in-place
+            model=model,  # Model instance is updated in-place
             device=cfg.DEVICE,
         )
 
