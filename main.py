@@ -32,6 +32,7 @@ from utils import (
     calculate_performance_metrics,
     init_wandb,
     load_vanilla_checkpoint,
+    log_best_model_predictions,
     save_checkpoint,
     set_seeds,
 )
@@ -586,6 +587,14 @@ def main():
                     float(iou_val)
                 )
 
+        # --- Log final predictions from the best model ---
+        log_best_model_predictions(
+            model=model,
+            val_loader=val_loader,
+            device=cfg.DEVICE,
+            config_module_ref=cfg,
+            num_images=5,
+        )
         flop_table_str = perf_metrics.get("flop_table", "FLOPs table not calculated.")
         if isinstance(flop_table_str, str) and "Error" not in flop_table_str:
             try:

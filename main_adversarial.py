@@ -25,6 +25,7 @@ from utils import (
     calculate_performance_metrics,
     init_wandb,
     load_adversarial_checkpoint,
+    log_best_model_predictions,
     save_checkpoint,
     set_seeds,
 )
@@ -590,6 +591,15 @@ def main_adversarial():
                 wandb.summary[f"{run_name_prefix}_final_iou_G_{class_name}"] = float(
                     iou_val
                 )
+
+        # ---  Log final predictions from the best generator model ---
+        log_best_model_predictions(
+            model=model_G,  # Use the generator model
+            val_loader=val_loader,
+            device=cfg.DEVICE,
+            config_module_ref=cfg,
+            num_images=5,
+        )
         wandb.finish()
 
     print("Adversarial run completed.")

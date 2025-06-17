@@ -16,6 +16,7 @@ import torch
 import wandb
 from fvcore.nn import FlopCountAnalysis, flop_count_table
 from torch import GradScaler, nn, optim
+from torch.utils.data import DataLoader
 
 from data_loader import CITYSCAPES_ID_TO_NAME_MAP
 
@@ -597,3 +598,85 @@ def set_seeds(seed_value):
         torch.cuda.manual_seed_all(seed_value)
 
     print(f"Seeds set to {seed_value}")
+
+
+@torch.no_grad()
+def log_best_model_predictions(
+    model: nn.Module,
+    val_loader: DataLoader,
+    device: torch.device,
+    config_module_ref: ConfigModule,
+    num_images: int = 8,
+) -> None:
+    """
+    Logs predictions from the best model on a few validation samples to W&B.
+    This is called once at the end of a training run.
+
+    Args:
+        model: The best performing model, already loaded with weights.
+        val_loader: The validation DataLoader to source images from.
+        device: The torch.device to run inference on.
+        config_module_ref: The configuration module (cfg) for parameters.
+        num_images: The number of images to log.
+    """
+    if not wandb.run:
+        print("W&B run not active. Skipping final prediction logging.")
+        return
+
+    print(f"Logging {num_images} sample predictions from the best model to W&B...")
+    model.eval()
+
+    # --- Prepare for denormalization ---
+    norm_mean = getattr(config_module_ref, "NORM_MEAN", (0.0, 0.0, 0.0))
+    norm_std = getattr(config_module_ref, "NORM_STD", (1.0, 1.0, 1.0))
+    mean_tensor = torch.tensor(norm_mean, device=device).view(1, 3, 1, 1)
+    std_tensor = torch.tensor(norm_std, device=device).view(1, 3, 1, 1)
+
+    images_to_log = []
+
+    # --- Collect samples from the validation loader ---
+    for i, (images, true_masks) in enumerate(val_loader):
+        if len(images_to_log) >= num_images:
+            break
+
+        # Get a single image and mask
+        image = images[0:1].to(device)  # Keep batch dim, shape (1, C, H, W)
+        true_mask = true_masks[0:1].to(device)  # Shape (1, H, W)
+
+        # --- Run Inference ---
+        outputs = model(image)
+        pred_mask = torch.argmax(outputs, dim=1)  # Shape (1, H, W)
+
+        # --- Prepare for logging ---
+        # Denormalize image for visualization
+        img_denorm = (image.squeeze(0).clone() * std_tensor) + mean_tensor
+        img_denorm = img_denorm.clamp(0, 1)
+
+        # Get 2D numpy arrays for W&B masks
+        true_mask_np = true_mask.squeeze(0).cpu().numpy()
+        pred_mask_np = pred_mask.squeeze(0).cpu().numpy()
+
+        # Create wandb.Image object
+        wandb_image = wandb.Image(
+            img_denorm,
+            masks={
+                "ground_truth": {
+                    "mask_data": true_mask_np,
+                    "class_labels": CITYSCAPES_ID_TO_NAME_MAP,
+                },
+                "prediction": {
+                    "mask_data": pred_mask_np,
+                    "class_labels": CITYSCAPES_ID_TO_NAME_MAP,
+                },
+            },
+            caption=f"Sample {i + 1}",
+        )
+        images_to_log.append(wandb_image)
+
+    # --- Log to W&B ---
+    if images_to_log:
+        wandb.log({"final_best_model_predictions": images_to_log})
+        print("Finished logging sample predictions.")
+    else:
+        print("Could not retrieve any images from validation loader to log.")
+        print("Could not retrieve any images from validation loader to log.")
