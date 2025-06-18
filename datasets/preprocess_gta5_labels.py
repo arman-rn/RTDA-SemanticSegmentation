@@ -1,4 +1,3 @@
-# preprocess_gta5_labels.py
 import argparse
 from pathlib import Path
 
@@ -6,10 +5,10 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
-# Import the centralized label definitions
+# Centralized label definitions
 from datasets.label_definitions import GTA5LabelInfo
 
-# Initialize the LUT using the imported GTA5LabelInfo
+# Initialize the LUT
 COLOR_TO_ID_LUT = np.full((256, 256, 256), GTA5LabelInfo.ignore_id, dtype=np.uint8)
 for color_tuple, class_id in GTA5LabelInfo.color_to_id_map.items():
     COLOR_TO_ID_LUT[color_tuple[0], color_tuple[1], color_tuple[2]] = class_id

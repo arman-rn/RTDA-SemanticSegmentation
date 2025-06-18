@@ -127,7 +127,7 @@ def validate_and_log(
                 epoch + 1,
                 config_module_ref,
                 global_step=global_step,
-            )  # Pass config_module_ref for NORM_MEAN/STD
+            )
             first_batch_images_logged = True
 
     # Calculate average validation loss
@@ -143,7 +143,6 @@ def validate_and_log(
     print(
         f"\nValidation Epoch {epoch + 1}: Avg Loss: {avg_val_loss:.4f}, Overall Mean IoU: {mean_iou_all_classes:.4f}"
     )
-    # Per-class IoUs are no longer printed here, will be handled in main.py for final summary
 
     # W&B Logging (Epoch-level Validation)
     # Logs validation loss, mIoU, and per-class IoUs to W&B, using global_step to align with training.

@@ -118,9 +118,3 @@ class CityScapes(Dataset):
         """
 
         return len(self.image_label_pairs)
-
-
-# Notes:
-# gtFine is the folder with the labels ("gtFine_labelTrainIds" files are the ones with labels for each pixel and the "gtFine_color" files are the ones with colors for each label for visualization),
-# the images with "gtFine_labelTrainIds" name are used for training because they are the ones with the labels (each pixel has a label),
-# we need to get the corresponding image for each label, which is in the "/images" folder with the same name but "leftImg8bit" instead of "gtFine_labelTrainIds".

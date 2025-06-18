@@ -143,7 +143,6 @@ def main():
             cfg.SGD_LEARNING_RATE = args.lr
         elif cfg.OPTIMIZER_TYPE.lower() == "adam":
             cfg.ADAM_LEARNING_RATE = args.lr
-        # If you add more optimizers, handle their LR override here
 
     # CHECKPOINT_DIR depends on the finalized cfg.MODEL_NAME
     cfg.CHECKPOINT_DIR = f"{cfg.ROOT_DIR}/checkpoints/{cfg.MODEL_NAME}"

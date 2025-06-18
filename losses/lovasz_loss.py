@@ -10,8 +10,6 @@ from itertools import filterfalse as ifilterfalse
 import torch
 import torch.nn as nn
 
-# --- Helper Functions ---
-
 
 def isnan(x):
     """Checks if a tensor value is Not a Number (NaN)."""

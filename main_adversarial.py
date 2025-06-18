@@ -236,7 +236,9 @@ def main_adversarial():
     # Discriminator Optimizer(s)
     optimizer_D_main = optim.Adam(
         model_D_main.parameters(),
-        lr=cfg.ADVERSARIAL_DISCRIMINATOR_MAIN_LEARNING_RATE,
+        lr=cfg.ADVERSARIAL_DISCRIMINATOR_MAIN_LEARNING_RATE
+        if is_multi_level
+        else cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
         betas=(
             cfg.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA1,
             cfg.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA2,

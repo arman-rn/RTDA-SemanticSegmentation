@@ -19,7 +19,6 @@ from torch.utils.data import DataLoader
 from datasets.cityscapes import CityScapes
 from datasets.gta5 import GTA5
 
-# Type alias for the config module for clarity
 ConfigModule = Any
 
 
@@ -41,7 +40,7 @@ class InfiniteDataLoader:
         try:
             return next(self.iterator)
         except StopIteration:
-            print("Target DataLoader iterator reset.")  # Optional: for debugging
+            print("Target DataLoader iterator reset.")
             self.iterator = iter(self.data_loader)  # Reset iterator
             return next(self.iterator)
 
@@ -169,9 +168,6 @@ def get_loaders(
         )
         if target_dataset_name.lower() == "cityscapes":
             target_dataset_path = config_obj.CITYSCAPES_DATASET_PATH
-            # For unlabeled target Cityscapes images, use the 'train' split's images.
-            # Transforms should be consistent with how Cityscapes images are processed.
-            # Using CITYSCAPES_TRAIN_TRANSFORMS is a reasonable default.
             target_transforms = config_obj.CITYSCAPES_TRAIN_TRANSFORMS
             print(
                 f"Loading Cityscapes (Target, Unlabeled) data from: {target_dataset_path}, split: {target_dataset_split}"

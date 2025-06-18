@@ -169,10 +169,8 @@ def init_wandb(
         base_config_dict["validation_image_height"] = cfg_module.CITYSCAPES_IMG_HEIGHT
         base_config_dict["validation_image_width"] = cfg_module.CITYSCAPES_IMG_WIDTH
 
-        # Merge base config with effective optimizer config
         full_config: Dict[str, Any] = {**base_config_dict, **effective_optimizer_config}
 
-        # Add adversarial-specific configurations if applicable
         if is_adversarial_training:
             full_config["training_mode"] = "adversarial"
             full_config["adversarial_source_dataset"] = (
@@ -255,15 +253,14 @@ def log_segmentation_to_wandb(
                         containing `NORM_MEAN` and `NORM_STD` for denormalization.
         max_images: The maximum number of image-mask sets to log from the batch.
     """
-    if not wandb.run:  # Check if wandb run is active
+    if not wandb.run:
         return
 
     num_to_log: int = min(max_images, images.shape[0])
     log_dict: Dict[str, wandb.Image] = {}
 
-    # Ensure NORM_MEAN and NORM_STD are available in current_config
-    norm_mean = getattr(current_config, "NORM_MEAN", (0.0, 0.0, 0.0))
-    norm_std = getattr(current_config, "NORM_STD", (1.0, 1.0, 1.0))
+    norm_mean = current_config.NORM_MEAN
+    norm_std = current_config.NORM_STD
 
     mean_tensor = torch.tensor(norm_mean, device=images.device).view(1, 3, 1, 1)
     std_tensor = torch.tensor(norm_std, device=images.device).view(1, 3, 1, 1)
@@ -429,8 +426,7 @@ def save_checkpoint(state: Dict[str, Any], filepath: str) -> None:
     # Optional: Save to W&B as an artifact if a run is active
     if wandb.run:
         try:
-            # Use policy="live" if you want W&B to keep this file updated (e.g., for 'latest_checkpoint.pth')
-            # For best model or periodic, you might not need "live" or can use default.
+            # Use policy="live" to keep this file updated (e.g., for 'latest_checkpoint.pth')
             wandb.save(filepath, base_path=os.path.dirname(filepath), policy="live")
             print(
                 f"Checkpoint '{os.path.basename(filepath)}' also saved to W&B artifacts."

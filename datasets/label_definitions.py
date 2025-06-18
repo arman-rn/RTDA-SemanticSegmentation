@@ -8,7 +8,7 @@ class _GTA5LabelDef:
     """Helper dataclass to store GTA5 label properties."""
 
     name: str
-    ID: int  # This ID will be used as the trainId
+    ID: int
     color: Tuple[int, int, int]
 
 
