@@ -1,0 +1,57 @@
+# -------------------
+# Python
+# -------------------
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs and outputs
+*.log
+*.tmp
+*.bak
+*.swp
+logs/
+outputs/
+runs/
+checkpoints/
+results/
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# VSCode settings
+.vscode/
+
+# PyTorch models
+*.pth
+*.pt
+*.ckpt
+
+# Dataset folders
+data/
+
+# Python environment (uv or venv)
+.uv/
+.venv/
+venv/
+env/
+.env
+*.env
+*.env.*
+
+# Packaging
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
+
+wandb/
+
+notebooks/
